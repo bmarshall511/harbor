@@ -79,29 +79,77 @@ Harbor can run entirely on Vercel with Dropbox as the storage provider. Local fi
 
 ### 1. Set Up Supabase
 
-1. Create a [Supabase](https://supabase.com) project (recommended region: **US Central** for lowest latency)
-2. Go to Project Settings > Database and copy the **Connection string (URI)** — use the **pooler** connection (port 6543)
-3. Enable these extensions in the SQL Editor:
+#### Create the project
+
+1. Go to [supabase.com](https://supabase.com) and sign in (or create an account)
+2. Click **New project**
+3. Choose your organization (or create one)
+4. Enter a project name (e.g. `harbor`)
+5. Set a **database password** — save this, you'll need it for the connection string
+6. Select a region closest to you and your users (e.g. **US Central (Iowa)** for Texas)
+7. Click **Create new project** and wait ~2 minutes for provisioning
+
+#### Find the connection strings
+
+You need **two** connection strings — one for runtime (pooled) and one for migrations (direct):
+
+1. In your Supabase project, go to **Project Settings** (gear icon in the sidebar) > **Database**
+2. Scroll down to the **Connection string** section
+3. Click the **URI** tab
+
+**For Vercel (runtime — pooled connection):**
+- Select **Mode: Session** from the dropdown
+- The connection string looks like:
+  ```
+  postgresql://postgres.[your-ref]:[your-password]@aws-0-[region].pooler.supabase.com:6543/postgres
+  ```
+- Note the port is **6543** (not 5432) — this goes through Supabase's built-in PgBouncer connection pooler, which is required for serverless (Vercel creates many short-lived connections)
+- This is your `DATABASE_URL` for Vercel
+
+**For migrations and SQL scripts (direct connection):**
+- Select **Mode: Direct** or find the direct connection below the pooler one
+- The direct connection string looks like:
+  ```
+  postgresql://postgres.[your-ref]:[your-password]@db.[your-ref].supabase.co:5432/postgres
+  ```
+- Note the port is **5432** and the host starts with `db.` — this bypasses the pooler and is needed for schema pushes, migrations, and running SQL scripts
+- Use this for `prisma db push` and `psql` commands
+
+> **Tip:** Replace `[your-password]` with the database password you set when creating the project. If you forgot it, reset it in Project Settings > Database > Database Password.
+
+#### Enable required extensions
+
+1. In your Supabase project, go to **SQL Editor** (left sidebar)
+2. Click **New query** and run:
    ```sql
    CREATE EXTENSION IF NOT EXISTS vector;
    CREATE EXTENSION IF NOT EXISTS pgcrypto;
    CREATE EXTENSION IF NOT EXISTS pg_trgm;
    ```
+3. Click **Run** — you should see "Success. No rows returned" for each
 
 ### 2. Prepare the Database
 
+Run these commands from your local machine (the Harbor project root). Replace the connection strings with your actual Supabase values:
+
 ```bash
-# Push the schema to your Supabase database
-DATABASE_URL="postgresql://postgres.[ref]:[pass]@aws-0-us-central1.pooler.supabase.com:6543/postgres" \
+# 1. Push the Prisma schema to create all tables
+#    Use the DIRECT connection string (port 5432) for this step
+DATABASE_URL="postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres" \
   npx prisma db push --schema=packages/database/prisma/schema.prisma
 
-# Run the search foundation SQL
+# 2. Run the search foundation SQL (full-text indexes + triggers)
+#    Use the DIRECT connection string for this step too
 cat packages/database/prisma/sql/001_search_foundation.sql | \
   psql "postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres"
 
-# Seed default data (roles, admin user)
-DATABASE_URL="..." pnpm db:seed
+# 3. Seed default data (creates roles and admin user)
+#    Use the POOLED connection string (port 6543) — this is what the app uses
+DATABASE_URL="postgresql://postgres.[ref]:[pass]@aws-0-[region].pooler.supabase.com:6543/postgres" \
+  pnpm db:seed
 ```
+
+> **Don't have `psql` installed?** You can run step 2 directly in the Supabase SQL Editor instead — just paste the contents of `packages/database/prisma/sql/001_search_foundation.sql` and click Run.
 
 ### 3. Create Vercel Project
 
