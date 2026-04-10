@@ -35,7 +35,40 @@ function LoginContent() {
   const [setupError, setSetupError] = useState<string | null>(null);
   const [setupPending, setSetupPending] = useState(false);
 
-  // Check auth mode
+  // Check if database is initialized
+  const [dbInitialized, setDbInitialized] = useState<boolean | null>(null);
+  const [dbInitializing, setDbInitializing] = useState(false);
+  const [dbInitSteps, setDbInitSteps] = useState<Array<{ step: string; status: string; message?: string }>>([]);
+  const [dbInitError, setDbInitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/setup/database')
+      .then((res) => res.json())
+      .then((data) => setDbInitialized(data.initialized))
+      .catch(() => setDbInitialized(false));
+  }, []);
+
+  const handleInitializeDb = async () => {
+    setDbInitializing(true);
+    setDbInitError(null);
+    setDbInitSteps([]);
+    try {
+      const res = await fetch('/api/setup/database', { method: 'POST' });
+      const data = await res.json();
+      setDbInitSteps(data.steps ?? []);
+      if (res.ok) {
+        setDbInitialized(true);
+      } else {
+        setDbInitError(data.message ?? 'Initialization failed');
+      }
+    } catch (err) {
+      setDbInitError(err instanceof Error ? err.message : 'Initialization failed');
+    } finally {
+      setDbInitializing(false);
+    }
+  };
+
+  // Check auth mode (only after DB is initialized)
   const { data: authMode } = useQuery({
     queryKey: ['auth-mode'],
     queryFn: async () => {
@@ -49,6 +82,7 @@ function LoginContent() {
       return 'multi';
     },
     staleTime: 60 * 1000,
+    enabled: dbInitialized === true,
   });
 
   // Check if first-admin setup is needed
@@ -105,13 +139,79 @@ function LoginContent() {
     }
   }, [authModeResolved, isLocalMode, authLoading, authenticated, redirect]);
 
-  if (!authModeResolved || authLoading || (isLocalMode && !authenticated)) {
+  // ── Database initialization wizard ────────────────────────────
+  if (dbInitialized === false) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <div className="w-full max-w-md">
+          <div className="text-center">
+            <Archive className="mx-auto h-10 w-10 text-primary" />
+            <h1 className="mt-4 text-2xl font-bold tracking-tight">Welcome to Harbor</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Your database needs to be set up before you can use Harbor.
+              This will create all tables, indexes, and default configuration.
+            </p>
+          </div>
+
+          <div className="mt-8 rounded-xl border border-border bg-card p-6 shadow-sm">
+            {dbInitSteps.length > 0 && (
+              <div className="mb-4 space-y-2">
+                {dbInitSteps.map((step, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    {step.status === 'ok' ? (
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500/20 text-green-600 text-xs">✓</span>
+                    ) : (
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20 text-red-600 text-xs">✗</span>
+                    )}
+                    <span className={step.status === 'ok' ? 'text-foreground' : 'text-destructive'}>{step.step}</span>
+                    {step.message && <span className="text-[10px] text-muted-foreground">({step.message})</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {dbInitError && (
+              <div className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                {dbInitError}
+              </div>
+            )}
+
+            <button
+              onClick={handleInitializeDb}
+              disabled={dbInitializing}
+              className={cn(
+                'w-full rounded-lg bg-primary py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90',
+                'disabled:cursor-wait disabled:opacity-60',
+              )}
+            >
+              {dbInitializing ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Initializing database...
+                </span>
+              ) : dbInitSteps.length > 0 && dbInitError ? (
+                'Retry'
+              ) : (
+                'Initialize Database'
+              )}
+            </button>
+
+            <p className="mt-4 text-center text-[11px] text-muted-foreground">
+              Make sure your <code className="rounded bg-muted px-1">DATABASE_URL</code> is set correctly in <code className="rounded bg-muted px-1">.env</code> and the PostgreSQL server is running.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (dbInitialized === null || !authModeResolved || authLoading || (isLocalMode && !authenticated)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-center">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
           <p className="mt-3 text-sm text-muted-foreground">
-            {isLocalMode ? 'Starting Harbor...' : 'Checking session...'}
+            {dbInitialized === null ? 'Checking database...' : isLocalMode ? 'Starting Harbor...' : 'Checking session...'}
           </p>
         </div>
       </div>

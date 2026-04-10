@@ -42,20 +42,16 @@ pnpm install
 # Start PostgreSQL
 docker compose up -d
 
-# Set up database
-pnpm db:generate
-pnpm db:push
-pnpm db:seed
-
-# Run the search foundation SQL (full-text search indexes + triggers)
-cat packages/database/prisma/sql/001_search_foundation.sql | \
-  docker exec -i harbor-postgres psql -U harbor -d harbor
-
 # Start development
 pnpm dev
 ```
 
-The dev server automatically finds a free port. The URL is printed in the console.
+On first launch, Harbor detects that the database is empty and shows a **setup wizard** in the browser. Click **"Initialize Database"** to automatically:
+1. Create all tables (Prisma schema push)
+2. Seed default roles, settings, and local user
+3. Set up full-text search indexes and triggers
+
+No manual `prisma` commands needed. The dev server automatically finds a free port — the URL is printed in the console.
 
 ### Dev Scripts
 
