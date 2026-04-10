@@ -93,25 +93,15 @@ You need **two** connection strings — one for runtime (pooled) and one for mig
 2. Scroll down to the **Connection string** section
 3. Click the **URI** tab
 
-**For Vercel (runtime — pooled connection):**
+**Copy the pooled connection string:**
 - Select **Mode: Session** from the dropdown
 - The connection string looks like:
   ```
   postgresql://postgres.[your-ref]:[your-password]@aws-0-[region].pooler.supabase.com:6543/postgres
   ```
 - Note the port is **6543** (not 5432) — this goes through Supabase's built-in PgBouncer connection pooler, which is required for serverless (Vercel creates many short-lived connections)
+- Replace `[your-password]` with the database password you set when creating the project
 - This is your `DATABASE_URL` for Vercel
-
-**For migrations and SQL scripts (direct connection):**
-- Select **Mode: Direct** or find the direct connection below the pooler one
-- The direct connection string looks like:
-  ```
-  postgresql://postgres.[your-ref]:[your-password]@db.[your-ref].supabase.co:5432/postgres
-  ```
-- Note the port is **5432** and the host starts with `db.` — this bypasses the pooler and is needed for schema pushes, migrations, and running SQL scripts
-- Use this for `prisma db push` and `psql` commands
-
-> **Tip:** Replace `[your-password]` with the database password you set when creating the project. If you forgot it, reset it in Project Settings > Database > Database Password.
 
 #### Enable required extensions
 
@@ -126,26 +116,11 @@ You need **two** connection strings — one for runtime (pooled) and one for mig
 
 ### 2. Prepare the Database
 
-Run these commands from your local machine (the Harbor project root). Replace the connection strings with your actual Supabase values:
+The database is initialized automatically on first visit — no manual CLI commands needed.
 
-```bash
-# 1. Push the Prisma schema to create all tables
-#    Use the DIRECT connection string (port 5432) for this step
-DATABASE_URL="postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres" \
-  npx prisma db push --schema=packages/database/prisma/schema.prisma
+After deploying to Vercel (step 3 below), visit your app URL. Harbor will detect the empty database and show a **setup wizard**. Click **"Initialize Database"** to automatically create all tables, seed default roles and settings, and set up search indexes.
 
-# 2. Run the search foundation SQL (full-text indexes + triggers)
-#    Use the DIRECT connection string for this step too
-cat packages/database/prisma/sql/001_search_foundation.sql | \
-  psql "postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres"
-
-# 3. Seed default data (creates roles and admin user)
-#    Use the POOLED connection string (port 6543) — this is what the app uses
-DATABASE_URL="postgresql://postgres.[ref]:[pass]@aws-0-[region].pooler.supabase.com:6543/postgres" \
-  pnpm db:seed
-```
-
-> **Don't have `psql` installed?** You can run step 2 directly in the Supabase SQL Editor instead — just paste the contents of `packages/database/prisma/sql/001_search_foundation.sql` and click Run.
+> **Note:** The three PostgreSQL extensions (`vector`, `pgcrypto`, `pg_trgm`) must be enabled manually in the Supabase SQL Editor BEFORE running the setup wizard, because they require superuser privileges. See step 1 above.
 
 ### 3. Create Vercel Project
 
