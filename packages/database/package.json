@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@harbor/types": "workspace:*",
+    "@prisma/adapter-pg": "^6.0.0",
     "@prisma/client": "^6.1.0"
   },
   "devDependencies": {
