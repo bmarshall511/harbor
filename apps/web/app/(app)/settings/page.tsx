@@ -714,6 +714,17 @@ function MetadataFieldsSection() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['metadata-fields'] }),
   });
 
+  const toggleFieldProp = useMutation({
+    mutationFn: async ({ id, prop, value }: { id: string; prop: string; value: boolean }) => {
+      await fetch(`/api/metadata-fields/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [prop]: value }),
+      });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['metadata-fields'] }),
+  });
+
   if (!isAdmin) return null;
 
   return (
@@ -744,6 +755,28 @@ function MetadataFieldsSection() {
                     key: <code className="rounded bg-muted px-1">{field.key}</code> · type: {field.fieldType}
                     {field.appliesTo?.length > 0 && field.appliesTo[0] !== 'all' && ` · ${field.appliesTo.join(', ')}`}
                   </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer" title="Show as a filter on the search page">
+                    <input
+                      type="checkbox"
+                      checked={field.showInSearch ?? false}
+                      onChange={(e) => toggleFieldProp.mutate({ id: field.id, prop: 'showInSearch', value: e.target.checked })}
+                      className="h-3 w-3 rounded border-input"
+                    />
+                    Search
+                  </label>
+                  {field.showInSearch && (
+                    <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer" title="Hide behind 'More filters' on search page">
+                      <input
+                        type="checkbox"
+                        checked={field.hiddenByDefault ?? false}
+                        onChange={(e) => toggleFieldProp.mutate({ id: field.id, prop: 'hiddenByDefault', value: e.target.checked })}
+                        className="h-3 w-3 rounded border-input"
+                      />
+                      Hidden
+                    </label>
+                  )}
                 </div>
                 <button
                   onClick={() => deleteMutation.mutate(field.id)}
