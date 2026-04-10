@@ -23,11 +23,13 @@
   "dependencies": {
     "@harbor/types": "workspace:*",
     "@prisma/adapter-pg": "^6.0.0",
-    "@prisma/client": "^6.1.0"
+    "@prisma/client": "^6.1.0",
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "@harbor/eslint-config": "workspace:*",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.20.0",
     "eslint": "^9.0.0",
     "prisma": "^6.1.0",
     "tsx": "^4.19.0",
