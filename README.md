@@ -146,11 +146,29 @@ In Vercel > Project Settings > Environment Variables:
 ### 5. Configure Dropbox
 
 1. Go to the [Dropbox App Console](https://www.dropbox.com/developers/apps)
-2. Add your Vercel domain to the OAuth 2 redirect URIs:
+2. Create a new app (or use an existing one):
+   - Choose **Scoped access**
+   - Choose **Full Dropbox** access type
+3. Under the **Permissions** tab, enable these scopes:
+
+   | Scope | Why |
+   |-------|-----|
+   | `account_info.read` | Read user profile during OAuth (display name, account type, namespace) |
+   | `files.metadata.read` | Browse folders, list files, search, detect changes via cursor |
+   | `files.content.read` | Download files, stream media, generate thumbnails |
+   | `files.content.write` | Write `.harbor/` metadata JSON files to Dropbox, create folders, move/rename/delete files |
+
+   > **Important:** Click **Submit** at the bottom of the Permissions page to save. Scope changes require the user to re-authorize — if you add scopes later, disconnect and reconnect Dropbox in Harbor's Settings.
+
+4. Under the **Settings** tab, add your domain to the **OAuth 2 Redirect URIs**:
    ```
    https://your-app.vercel.app/api/auth/dropbox/callback
    ```
-3. Ensure `files.content.write` scope is enabled (for writing metadata JSON to Dropbox)
+   For local development, also add:
+   ```
+   http://localhost:3000/api/auth/dropbox/callback
+   ```
+5. Copy the **App key** and **App secret** from the Settings tab — you'll enter these in Harbor's Settings UI after first login
 
 ### 6. Deploy
 
