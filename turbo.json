@@ -2,6 +2,7 @@
   "$schema": "https://turbo.build/schema.json",
   "globalEnv": [
     "DATABASE_URL",
+    "DIRECT_URL",
     "HARBOR_DEPLOYMENT_MODE",
     "HARBOR_SESSION_SECRET",
     "CRON_SECRET",

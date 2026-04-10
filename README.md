@@ -137,7 +137,8 @@ In Vercel > Project Settings > Environment Variables:
 | Variable | Value | Required |
 |----------|-------|----------|
 | `HARBOR_DEPLOYMENT_MODE` | `cloud` | Yes |
-| `DATABASE_URL` | Your Supabase pooled connection string (port 6543) | Yes |
+| `DATABASE_URL` | Supabase **pooled** connection string (port **6543**) — used at runtime | Yes |
+| `DIRECT_URL` | Supabase **direct** connection string (port **5432**) — used during build for schema migrations | Yes |
 | `HARBOR_SESSION_SECRET` | Random 64+ character string | Yes |
 | `CRON_SECRET` | Random string for cron auth | Yes |
 
