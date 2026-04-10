@@ -8,6 +8,9 @@
     ".": "./src/index.ts",
     "./client": "./src/client.ts"
   },
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  },
   "scripts": {
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

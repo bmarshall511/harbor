@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Open-source archive and media intelligence application",
+  "prisma": {
+    "schema": "packages/database/prisma/schema.prisma"
+  },
   "scripts": {
     "dev": "turbo dev --filter=@harbor/web",
     "dev:desktop": "turbo dev --filter=@harbor/web --filter=@harbor/desktop",
