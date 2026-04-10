@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "pnpm turbo build --filter=@harbor/web",
-  "installCommand": "pnpm install",
+  "buildCommand": "cd ../.. && pnpm turbo build --filter=@harbor/web",
+  "installCommand": "cd ../.. && pnpm install",
   "framework": "nextjs",
   "crons": [
     {
