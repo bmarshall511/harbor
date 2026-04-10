@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import path from 'node:path';
 
 const nextConfig: NextConfig = {
   transpilePackages: [
@@ -12,6 +13,7 @@ const nextConfig: NextConfig = {
     '@harbor/auth',
   ],
   serverExternalPackages: ['sharp', 'bcryptjs', 'bullmq'],
+  outputFileTracingRoot: path.join(__dirname, '../..'),
   images: {
     remotePatterns: [
       { protocol: 'http', hostname: 'localhost' },
@@ -19,8 +21,6 @@ const nextConfig: NextConfig = {
   },
   webpack: (config, { isServer }) => {
     if (isServer) {
-      // Externalize sharp and its optional platform-specific dependencies
-      // to prevent webpack from trying to bundle them
       config.externals = config.externals || [];
       const sharpExternals = [
         'sharp',
