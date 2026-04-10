@@ -15,6 +15,7 @@
     "apps/web/app/api/files/[id]/cache/route.ts": { "maxDuration": 60 },
     "apps/web/app/api/face-detection/route.ts": { "maxDuration": 120 },
     "apps/web/app/api/cron/dropbox-sync/route.ts": { "maxDuration": 120 },
-    "apps/web/app/api/events/route.ts": { "maxDuration": 900 }
+    "apps/web/app/api/setup/database/route.ts": { "maxDuration": 120 },
+    "apps/web/app/api/events/route.ts": { "maxDuration": 300 }
   }
 }
