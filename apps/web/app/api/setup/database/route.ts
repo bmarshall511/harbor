@@ -23,21 +23,31 @@ async function isDatabaseInitialized(): Promise<boolean> {
   }
 }
 
-async function doTablesExist(): Promise<boolean> {
+async function doTablesExist(): Promise<{ exists: boolean; error?: string }> {
   try {
     const { db } = await import('@harbor/database');
-    // If this query runs without error, the tables exist
     await db.$queryRaw`SELECT 1 FROM system_settings LIMIT 0`;
-    return true;
-  } catch {
-    return false;
+    return { exists: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[Setup] doTablesExist check failed:', message);
+    // Distinguish "table doesn't exist" from "can't connect"
+    if (message.includes('does not exist') || message.includes('relation') || message.includes('undefined table')) {
+      return { exists: false, error: 'Tables not created yet' };
+    }
+    // Connection or auth error — tables might exist but we can't reach DB
+    return { exists: false, error: message };
   }
 }
 
 export async function GET() {
-  const tablesExist = await doTablesExist();
-  const initialized = tablesExist ? await isDatabaseInitialized() : false;
-  return NextResponse.json({ initialized, tablesExist });
+  const tableCheck = await doTablesExist();
+  const initialized = tableCheck.exists ? await isDatabaseInitialized() : false;
+  return NextResponse.json({
+    initialized,
+    tablesExist: tableCheck.exists,
+    ...(tableCheck.error ? { dbError: tableCheck.error } : {}),
+  });
 }
 
 export async function POST() {
@@ -50,12 +60,12 @@ export async function POST() {
     );
   }
 
-  // Check if tables exist (created during build via prisma db push)
-  const tablesExist = await doTablesExist();
-  if (!tablesExist) {
+  // Check if tables exist (created via prisma db push)
+  const tableCheck = await doTablesExist();
+  if (!tableCheck.exists) {
     return NextResponse.json({
-      message: 'Database tables have not been created yet. This happens automatically during the build/deploy step. Try redeploying, or run "pnpm db:push" manually.',
-      steps: [{ step: 'Schema check', status: 'error', message: 'Tables not found — redeploy to create them' }],
+      message: tableCheck.error ?? 'Database tables not found. Run "pnpm db:push" to create them.',
+      steps: [{ step: 'Schema check', status: 'error', message: tableCheck.error ?? 'Tables not found' }],
     }, { status: 500 });
   }
 

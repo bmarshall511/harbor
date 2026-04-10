@@ -48,6 +48,7 @@ function LoginContent() {
       .then((data) => {
         setDbInitialized(data.initialized);
         setDbTablesExist(data.tablesExist ?? true);
+        if (data.dbError && !data.tablesExist) setDbInitError(data.dbError);
       })
       .catch(() => setDbInitialized(false));
   }, []);
