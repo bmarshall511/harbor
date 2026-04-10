@@ -3,6 +3,7 @@
   "buildCommand": "cd ../.. && pnpm turbo build --filter=@harbor/web",
   "installCommand": "cd ../.. && pnpm install",
   "framework": "nextjs",
+  "outputDirectory": ".next",
   "crons": [
     {
       "path": "/api/cron/dropbox-sync",
