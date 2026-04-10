@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "node ../../scripts/dev-web.mjs",
-    "build": "pnpm --filter @harbor/database db:generate && pnpm --filter @harbor/database db:push && next build",
+    "build": "pnpm --filter @harbor/database db:generate && next build",
     "start": "next start",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
