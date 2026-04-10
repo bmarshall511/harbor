@@ -166,13 +166,11 @@ In Vercel > Project Settings > Environment Variables:
 | Variable | Value | Required |
 |----------|-------|----------|
 | `HARBOR_DEPLOYMENT_MODE` | `cloud` | Yes |
-| `DATABASE_URL` | Your Supabase pooled connection string | Yes |
+| `DATABASE_URL` | Your Supabase pooled connection string (port 6543) | Yes |
 | `HARBOR_SESSION_SECRET` | Random 64+ character string | Yes |
-| `DROPBOX_APP_KEY` | Your Dropbox app key | Yes (for Dropbox) |
-| `DROPBOX_APP_SECRET` | Your Dropbox app secret | Yes (for Dropbox) |
 | `CRON_SECRET` | Random string for cron auth | Yes |
-| `OPENAI_API_KEY` | OpenAI API key | Optional (AI features) |
-| `ANTHROPIC_API_KEY` | Anthropic API key | Optional (AI features) |
+
+> **Note:** Dropbox and AI API keys are configured through the Settings UI after your first login — they are stored in an encrypted database table, NOT as environment variables.
 
 ### 5. Configure Dropbox
 

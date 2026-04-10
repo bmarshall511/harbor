@@ -13,13 +13,8 @@ const envSchema = z.object({
   // Secrets
   HARBOR_SESSION_SECRET: z.string().min(16).default('change-me-in-production'),
 
-  // OAuth credentials (secrets — never in DB)
-  DROPBOX_APP_KEY: z.string().optional(),
-  DROPBOX_APP_SECRET: z.string().optional(),
-
-  // AI API keys (secrets — never in DB)
-  OPENAI_API_KEY: z.string().optional(),
-  ANTHROPIC_API_KEY: z.string().optional(),
+  // Note: Dropbox and AI API keys are stored in the encrypted
+  // secrets table (configured via Settings UI), NOT in env vars.
 
   // Runtime bootstrap (only needed before DB is available)
   HARBOR_PORT: z.coerce.number().default(3000),

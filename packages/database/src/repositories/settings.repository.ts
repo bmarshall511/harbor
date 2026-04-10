@@ -11,7 +11,6 @@ export const SETTING_DEFAULTS: Record<string, string> = {
   'ai.faceRecognition': 'false',
   'ai.defaultProvider': 'openai',
   'log.level': 'info',
-  'dropbox.redirectUri': 'http://localhost:3000/api/auth/dropbox/callback',
   'indexing.ignorePatterns': '.gitkeep,.DS_Store,Thumbs.db,.harbor,desktop.ini,.Spotlight-V100,.Trashes,Icon,*.aae',
   'registration.enabled': 'true',
   'seo.allowCrawlers': 'false',

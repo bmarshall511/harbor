@@ -32,6 +32,8 @@ interface FaceDetectionJobOptions {
   archiveRootId?: string;
   userId?: string;
   limit?: number;
+  /** OpenAI API key from the encrypted secrets store. */
+  openAiApiKey?: string;
 }
 
 export class FaceDetectionJob {
@@ -52,7 +54,7 @@ export class FaceDetectionJob {
       await this.jobManager.markRunning(jobId);
 
       // Get the AI provider
-      const aiService = await this.buildAiService();
+      const aiService = await this.buildAiService(options.openAiApiKey);
       if (!aiService) {
         await this.jobManager.markFailed(jobId, 'Face detection is not configured. Enable AI and set an OpenAI API key in settings.');
         return { processed: 0, facesFound: 0 };
@@ -208,7 +210,7 @@ export class FaceDetectionJob {
     }
   }
 
-  private async buildAiService(): Promise<AiService | null> {
+  private async buildAiService(openAiApiKey?: string): Promise<AiService | null> {
     const { SettingsRepository } = await import('@harbor/database');
     const settingsRepo = new SettingsRepository();
 
@@ -216,8 +218,7 @@ export class FaceDetectionJob {
     const faceEnabled = await settingsRepo.get('ai.faceRecognition');
     if (aiEnabled !== 'true' || faceEnabled !== 'true') return null;
 
-    // Get OpenAI API key from secrets
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = openAiApiKey;
     if (!apiKey) return null;
 
     const service = new AiService();

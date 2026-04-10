@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { DropboxSyncService } from '@harbor/jobs';
 import { db } from '@harbor/database';
+import { getSecret } from '@/lib/secrets';
 
 /**
  * GET /api/cron/dropbox-sync
@@ -42,7 +43,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ message: 'No Dropbox connection found', results: [] });
   }
 
-  const syncService = new DropboxSyncService();
+  const appKey = await getSecret('dropbox.appKey');
+  const appSecret = await getSecret('dropbox.appSecret');
+  const syncService = new DropboxSyncService(
+    appKey && appSecret ? { appKey, appSecret } : undefined,
+  );
   const results = await syncService.syncAll(adminToken.userId);
 
   const totalAdded = results.reduce((s, r) => s + r.added, 0);

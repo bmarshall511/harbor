@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { FaceDetectionJob } from '@harbor/jobs';
 import { requireAuth, requirePermission } from '@/lib/auth';
+import { getSecret } from '@/lib/secrets';
 
 /**
  * POST /api/face-detection — Trigger face detection.
@@ -23,12 +24,15 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const { fileId, archiveRootId, limit } = body;
 
+  const openAiApiKey = await getSecret('openai.apiKey');
+
   const job = new FaceDetectionJob();
   const result = await job.run({
     fileId,
     archiveRootId,
     userId: auth.userId,
     limit: limit ?? 100,
+    openAiApiKey: openAiApiKey ?? undefined,
   });
 
   return NextResponse.json(result);

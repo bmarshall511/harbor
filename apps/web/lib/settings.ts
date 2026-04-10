@@ -51,7 +51,7 @@ function getEnvFallback(key: string): string {
     'ai.enabled': process.env.HARBOR_AI_ENABLED,
     'ai.faceRecognition': process.env.HARBOR_FACE_RECOGNITION_ENABLED,
     'log.level': process.env.LOG_LEVEL,
-    'dropbox.redirectUri': process.env.DROPBOX_REDIRECT_URI,
+    // dropbox.redirectUri is always derived from the request origin — no env var needed
   };
   return envMap[key] ?? SETTING_DEFAULTS[key] ?? '';
 }

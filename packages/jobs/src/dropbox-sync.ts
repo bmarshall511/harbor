@@ -32,6 +32,12 @@ interface SyncResult {
 }
 
 export class DropboxSyncService {
+  private dropboxCredentials?: { appKey: string; appSecret: string };
+
+  constructor(dropboxCredentials?: { appKey: string; appSecret: string }) {
+    this.dropboxCredentials = dropboxCredentials;
+  }
+
   /**
    * Sync all active Dropbox archive roots.
    * Returns a result per root.
@@ -271,9 +277,8 @@ export class DropboxSyncService {
     });
     if (!token) return null;
 
-    // Get secrets from env (Vercel) or DB
-    const appKey = process.env.DROPBOX_APP_KEY ?? '';
-    const appSecret = process.env.DROPBOX_APP_SECRET ?? '';
+    const appKey = this.dropboxCredentials?.appKey ?? '';
+    const appSecret = this.dropboxCredentials?.appSecret ?? '';
     const tokenMeta = (token.metadata as Record<string, unknown>) ?? {};
     const pathRoot = (tokenMeta.rootNamespaceId as string) ?? undefined;
 

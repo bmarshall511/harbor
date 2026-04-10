@@ -99,8 +99,8 @@ export class IndexingJob {
         throw new Error('No Dropbox access token found. Connect Dropbox in Settings first.');
       }
 
-      const appKey = dropboxCredentials?.appKey ?? process.env.DROPBOX_APP_KEY ?? '';
-      const appSecret = dropboxCredentials?.appSecret ?? process.env.DROPBOX_APP_SECRET ?? '';
+      const appKey = dropboxCredentials?.appKey ?? '';
+      const appSecret = dropboxCredentials?.appSecret ?? '';
 
       // Extract root namespace for team/business account support
       const tokenMeta = (token.metadata as Record<string, unknown>) ?? {};

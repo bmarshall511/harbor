@@ -49,7 +49,13 @@ export async function register() {
           select: { userId: true },
         });
         if (adminToken) {
-          const syncService = new DropboxSyncService();
+          // Read Dropbox credentials from the secrets store (DB or env fallback)
+          const { getSecret } = await import('@/lib/secrets');
+          const appKey = await getSecret('dropbox.appKey');
+          const appSecret = await getSecret('dropbox.appSecret');
+          const syncService = new DropboxSyncService(
+            appKey && appSecret ? { appKey, appSecret } : undefined,
+          );
           console.log('[instrumentation] Starting Dropbox change poller (60s interval)');
           // Don't await — runs in the background
           (async () => {
