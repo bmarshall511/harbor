@@ -7,7 +7,7 @@
   "crons": [
     {
       "path": "/api/cron/dropbox-sync",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 0 * * *"
     }
   ],
   "functions": {
