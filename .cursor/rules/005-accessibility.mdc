@@ -1,0 +1,7 @@
+---
+description: Accessibility standards
+globs: ["**/*"]
+alwaysApply: true
+---
+- Aim for AAA-quality accessibility where reasonably possible.
+- Require keyboard support, visible focus, semantics, reduced motion, and strong screen reader UX.

@@ -1,0 +1,32 @@
+{
+  "name": "harbor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open-source archive and media intelligence application",
+  "scripts": {
+    "dev": "turbo dev --filter=@harbor/web",
+    "dev:desktop": "turbo dev --filter=@harbor/web --filter=@harbor/desktop",
+    "dev:mcp": "pnpm --filter harbor-devtools-mcp dev",
+    "dev:full": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "db:generate": "pnpm --filter @harbor/database db:generate",
+    "db:migrate": "pnpm --filter @harbor/database db:migrate",
+    "db:push": "pnpm --filter @harbor/database db:push",
+    "db:seed": "pnpm --filter @harbor/database db:seed",
+    "db:studio": "pnpm --filter @harbor/database db:studio",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.3.0",
+    "turbo": "^2.3.0",
+    "typescript": "^5.6.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

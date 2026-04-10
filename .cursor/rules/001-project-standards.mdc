@@ -1,0 +1,9 @@
+---
+description: Global project standards
+globs: ["**/*"]
+alwaysApply: true
+---
+- Follow CLAUDE.md and AGENTS.md.
+- Inspect existing code before major changes.
+- Ask targeted clarifying questions when requirements are ambiguous.
+- Keep code DRY, typed, tested, documented, and production-ready.

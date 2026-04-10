@@ -1,0 +1,23 @@
+{
+  "name": "@harbor/realtime",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ --max-warnings 0"
+  },
+  "dependencies": {
+    "@harbor/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@harbor/eslint-config": "workspace:*",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.6.0"
+  }
+}

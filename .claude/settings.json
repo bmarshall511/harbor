@@ -1,0 +1,8 @@
+{
+  "project": {
+    "name": "harbor",
+    "expect_architecture_first": true,
+    "prefer_small_safe_slices": true,
+    "require_tests_for_behavior_changes": true
+  }
+}

@@ -1,0 +1,9 @@
+---
+description: Frontend and UI standards
+globs: ["app/**/*", "src/components/**/*", "components/**/*"]
+alwaysApply: true
+---
+- Use Next.js App Router patterns.
+- Favor shadcn/ui composition and accessible semantics.
+- Build premium, calm, modern UI.
+- Support keyboard-first workflows and shortcut discoverability.

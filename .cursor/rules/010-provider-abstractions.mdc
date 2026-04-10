@@ -1,0 +1,8 @@
+---
+description: Provider abstraction standards
+globs: ["src/providers/**/*", "src/features/providers/**/*", "src/lib/providers/**/*"]
+alwaysApply: true
+---
+- Local filesystem and Dropbox are first-class providers.
+- Use capability-driven interfaces.
+- Keep provider-specific logic in adapters, not generic UI or services.

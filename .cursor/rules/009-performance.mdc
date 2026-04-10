@@ -1,0 +1,8 @@
+---
+description: Performance standards
+globs: ["**/*"]
+alwaysApply: true
+---
+- Optimize for very large archives.
+- Virtualize large lists/grids where needed.
+- Cache previews outside source archives.

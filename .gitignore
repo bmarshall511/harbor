@@ -1,0 +1,48 @@
+# Dependencies
+node_modules
+
+# Build
+.next
+dist
+build
+out
+
+# Test
+coverage
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Database
+sqlite.db
+*.sqlite
+*.sqlite3
+
+# Data (preview cache, dev port file)
+data/
+
+# Turbo
+.turbo
+
+# IDE
+*.swp
+*.swo
+.idea
+
+# Electron
+*.dmg
+*.AppImage
+*.snap
+
+# Vercel
+.vercel

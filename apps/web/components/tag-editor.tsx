@@ -1,0 +1,242 @@
+'use client';
+
+/**
+ * Tag editor — sleek autocomplete with inline browse-all.
+ *
+ * Behavior:
+ *   • Selected tags render as removable pills inside the input area.
+ *   • Click anywhere on the input row to start typing.
+ *   • An empty input shows the most-used existing tags so the user
+ *     can pick without typing — the common case.
+ *   • Typing filters in real time. Arrow keys + Enter pick a
+ *     suggestion. Hitting Enter on a query that doesn't match an
+ *     existing tag creates a new one.
+ *   • Color dots and usage counts come from the tag registry.
+ */
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { tags as tagsApi } from '@/lib/api';
+import { cn } from '@/lib/cn';
+import { X, Tag as TagIcon } from 'lucide-react';
+import { toast } from 'sonner';
+import type { TagDto } from '@harbor/types';
+
+export function TagEditor({
+  entityType,
+  entityId,
+  tags,
+}: {
+  entityType: 'FILE' | 'FOLDER';
+  entityId: string;
+  tags: TagDto[];
+}) {
+  const queryClient = useQueryClient();
+  const [input, setInput] = useState('');
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // All tags in the library (used when the input is empty so the
+  // user can browse without typing). Cached for a minute.
+  const { data: allTags = [] } = useQuery<TagDto[]>({
+    queryKey: ['tags', 'all'],
+    queryFn: () => tagsApi.list(),
+    staleTime: 60_000,
+  });
+
+  // Filtered query, only fired when the user is actively typing.
+  const { data: searched = [] } = useQuery<TagDto[]>({
+    queryKey: ['tags', 'search', input],
+    queryFn: () => tagsApi.search(input),
+    enabled: input.length >= 1,
+  });
+
+  // Build the suggestion list:
+  //   • Empty input → top-used existing tags (browse mode)
+  //   • Non-empty   → server search results
+  // In both cases, drop tags already on this entity.
+  const suggestions = useMemo(() => {
+    const source = input.length === 0 ? allTags : searched;
+    const applied = new Set(tags.map((t) => t.id));
+    const list = source
+      .filter((t) => !applied.has(t.id))
+      .sort((a, b) => (b.usageCount ?? 0) - (a.usageCount ?? 0));
+    return list.slice(0, input.length === 0 ? 12 : 8);
+  }, [input, allTags, searched, tags]);
+
+  // Whether the typed query exactly matches an existing tag (case-insensitive).
+  // If not, Enter creates a new one.
+  const exactMatch = useMemo(() => {
+    if (!input.trim()) return null;
+    const lower = input.trim().toLowerCase();
+    return suggestions.find((t) => t.name.toLowerCase() === lower) ?? null;
+  }, [input, suggestions]);
+
+  const addTag = useMutation({
+    mutationFn: async (tagName: string) => {
+      const endpoint = entityType === 'FILE' ? 'files' : 'folders';
+      const res = await fetch(`/api/${endpoint}/${entityId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: [tagName] }),
+      });
+      if (!res.ok) throw new Error('Failed to add tag');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [entityType === 'FILE' ? 'file' : 'folder', entityId] });
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+      setInput('');
+      setHighlight(0);
+      inputRef.current?.focus();
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const removeTag = useMutation({
+    mutationFn: async (tagId: string) => {
+      const res = await fetch(`/api/tags/${tagId}/remove`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entityType, entityId }),
+      });
+      if (!res.ok) throw new Error('Failed to remove tag');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [entityType === 'FILE' ? 'file' : 'folder', entityId] });
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const pick = suggestions[highlight];
+      if (pick) addTag.mutate(pick.name);
+      else if (input.trim()) addTag.mutate(input.trim());
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight((i) => Math.min(i + 1, Math.max(0, suggestions.length - 1)));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight((i) => Math.max(0, i - 1));
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+      setInput('');
+    } else if (e.key === 'Backspace' && input.length === 0 && tags.length > 0) {
+      // Backspace from an empty input removes the last applied tag.
+      removeTag.mutate(tags[tags.length - 1].id);
+    }
+  }
+
+  // Click-outside closes the popover.
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  return (
+    <div ref={containerRef}>
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+        <TagIcon className="h-3 w-3" />
+        Tags
+      </div>
+
+      {/* Combo input — selected pills + text field share the same row */}
+      <div
+        onClick={() => { inputRef.current?.focus(); setOpen(true); }}
+        className={cn(
+          'relative flex flex-wrap items-center gap-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs',
+          'focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-0',
+        )}
+      >
+        {tags.map((tag) => (
+          <span
+            key={tag.id}
+            className="group inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 text-[11px] font-medium text-accent-foreground"
+          >
+            {tag.color && (
+              <span
+                className="h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: tag.color }}
+              />
+            )}
+            {tag.name}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                removeTag.mutate(tag.id);
+              }}
+              className="rounded-full p-0.5 opacity-50 hover:bg-destructive/20 hover:opacity-100"
+              aria-label={`Remove tag ${tag.name}`}
+            >
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          value={input}
+          onChange={(e) => { setInput(e.target.value); setHighlight(0); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={handleKeyDown}
+          placeholder={tags.length === 0 ? 'Pick or type tags…' : ''}
+          className="min-w-[6ch] flex-1 bg-transparent text-[11px] placeholder:text-muted-foreground focus:outline-none"
+        />
+
+        {/* Suggestion popover */}
+        {open && (suggestions.length > 0 || (input.trim() && !exactMatch)) && (
+          <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-xl">
+            {input.length === 0 && suggestions.length > 0 && (
+              <div className="px-2 py-1 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
+                Most used
+              </div>
+            )}
+            {suggestions.map((s, i) => (
+              <button
+                key={s.id}
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); addTag.mutate(s.name); }}
+                onMouseEnter={() => setHighlight(i)}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs',
+                  i === highlight ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                )}
+              >
+                {s.color ? (
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: s.color }}
+                  />
+                ) : (
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/30" />
+                )}
+                <span className="truncate">{s.name}</span>
+                <span className="ml-auto text-[10px] text-muted-foreground">{s.usageCount}</span>
+              </button>
+            ))}
+            {input.trim() && !exactMatch && (
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); addTag.mutate(input.trim()); }}
+                className="mt-1 flex w-full items-center gap-2 rounded-md border-t border-border px-2 py-1.5 text-left text-xs text-primary hover:bg-accent"
+              >
+                <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider">
+                  New
+                </span>
+                Create &ldquo;{input.trim()}&rdquo;
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

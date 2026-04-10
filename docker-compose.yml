@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: harbor-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: harbor
+      POSTGRES_PASSWORD: harbor_dev
+      POSTGRES_DB: harbor
+    ports:
+      - "${HARBOR_PG_PORT:-5432}:5432"
+    volumes:
+      - harbor_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harbor"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: harbor-redis
+    restart: unless-stopped
+    ports:
+      - "${HARBOR_REDIS_PORT:-6380}:6379"
+    volumes:
+      - harbor_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  harbor_pgdata:
+  harbor_redis:

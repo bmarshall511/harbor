@@ -1,0 +1,9 @@
+---
+description: Database standards
+globs: ["prisma/**/*", "**/*.prisma", "src/db/**/*"]
+alwaysApply: true
+---
+- Prefer typed schema plus flexible metadata extensions.
+- Postgres is the real target.
+- Add indexes intentionally.
+- Track AI usage, audit logs, jobs, permissions, provider identities, and relations.

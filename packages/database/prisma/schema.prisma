@@ -1,0 +1,858 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearchPostgres", "postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector, pgcrypto, pg_trgm(schema: "public")]
+}
+
+// =============================================================================
+// Users & Auth
+// =============================================================================
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String?  @unique
+  username     String   @unique
+  displayName  String   @map("display_name")
+  passwordHash String?  @map("password_hash")
+  avatarUrl    String?  @map("avatar_url")
+  isActive     Boolean  @default(true) @map("is_active")
+  isLocalUser  Boolean  @default(false) @map("is_local_user")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  roleAssignments UserRoleAssignment[]
+  sessions        Session[]
+  auditLogs       AuditLog[]
+  favorites       Favorite[]
+  savedSearches   SavedSearch[]
+  searchLogs      SearchLog[]
+  collections     Collection[]
+  preferences     UserPreference[]
+  recentViews     RecentView[]
+  fileEdits       FileMetadataEdit[]
+  folderEdits     FolderMetadataEdit[]
+  createdRelations EntityRelation[]   @relation("relation_created_by")
+  aiJobs          AiJob[]
+  comments        Comment[]
+  providerTokens  ProviderToken[]
+  deleteRequestsCreated  DeleteRequest[] @relation("delete_requests_requested_by")
+  deleteRequestsResolved DeleteRequest[] @relation("delete_requests_resolved_by")
+  linkedPerson           Person?         @relation("person_linked_user")
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  userAgent String?  @map("user_agent")
+  ipAddress String?  @map("ip_address")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@map("sessions")
+}
+
+// =============================================================================
+// Roles & Permissions
+// =============================================================================
+
+enum SystemRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+  GUEST
+}
+
+model Role {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String     @unique
+  systemRole  SystemRole @map("system_role")
+  description String?
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  permissions  RolePermission[]
+  assignments  UserRoleAssignment[]
+  rootAccesses ArchiveRootAccess[]
+
+  @@map("roles")
+}
+
+model RolePermission {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  roleId   String @map("role_id") @db.Uuid
+  resource String // e.g. "files", "metadata", "tags", "relations", "admin"
+  action   String // e.g. "read", "write", "delete", "manage"
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, resource, action])
+  @@map("role_permissions")
+}
+
+model UserRoleAssignment {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  roleId String @map("role_id") @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_role_assignments")
+}
+
+// =============================================================================
+// Archive Roots & Providers
+// =============================================================================
+
+enum ProviderType {
+  LOCAL_FILESYSTEM
+  DROPBOX
+}
+
+enum ArchiveCapability {
+  READ
+  WRITE
+  DELETE
+  MOVE
+  RENAME
+  CREATE_FOLDERS
+  SEARCH
+}
+
+model ArchiveRoot {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  providerType ProviderType        @map("provider_type")
+  rootPath     String              @map("root_path")
+  isPrivate    Boolean             @default(false) @map("is_private")
+  isActive     Boolean             @default(true) @map("is_active")
+  capabilities ArchiveCapability[] @default([READ])
+  config       Json                @default("{}") // Provider-specific config
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+
+  // Dropbox change polling: the cursor from the last successful
+  // `list_folder` call. Used by the poller to detect new/changed/
+  // deleted files since the last sync. NULL = never synced yet.
+  syncCursor    String?   @map("sync_cursor")
+  lastSyncedAt  DateTime? @map("last_synced_at")
+
+  folders        Folder[]
+  files          File[]
+  accesses       ArchiveRootAccess[]
+  deleteRequests DeleteRequest[]
+
+  @@index([providerType])
+  @@map("archive_roots")
+}
+
+model ArchiveRootAccess {
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  archiveRootId String @map("archive_root_id") @db.Uuid
+  roleId        String @map("role_id") @db.Uuid
+
+  archiveRoot ArchiveRoot @relation(fields: [archiveRootId], references: [id], onDelete: Cascade)
+  role        Role        @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([archiveRootId, roleId])
+  @@map("archive_root_accesses")
+}
+
+model ProviderToken {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String       @map("user_id") @db.Uuid
+  providerType ProviderType @map("provider_type")
+  accessToken  String       @map("access_token")
+  refreshToken String?      @map("refresh_token")
+  expiresAt    DateTime?    @map("expires_at")
+  metadata     Json         @default("{}") // Provider-specific account info (e.g. Dropbox root_namespace_id)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, providerType])
+  @@map("provider_tokens")
+}
+
+// =============================================================================
+// Folders
+// =============================================================================
+
+model Folder {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  archiveRootId String   @map("archive_root_id") @db.Uuid
+  parentId      String?  @map("parent_id") @db.Uuid
+  name          String
+  path          String   // Full relative path from archive root
+  depth         Int      @default(0)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  indexedAt      DateTime? @map("indexed_at")
+
+  // Typed metadata
+  description   String?
+  eventDate     DateTime? @map("event_date")
+  location      String?
+  coverFileId   String?   @map("cover_file_id") @db.Uuid
+
+  archiveRoot ArchiveRoot @relation(fields: [archiveRootId], references: [id], onDelete: Cascade)
+  parent      Folder?     @relation("folder_tree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Folder[]    @relation("folder_tree")
+  files       File[]
+  tags        FolderTag[]
+  metadata    FolderMetadata[]
+  metadataEdits FolderMetadataEdit[]
+  comments    Comment[]   @relation("folder_comments")
+
+  // Full-text search
+  searchVector Unsupported("tsvector")? @map("search_vector")
+
+  @@unique([archiveRootId, path])
+  @@index([parentId])
+  @@index([archiveRootId])
+  @@index([eventDate])
+  @@map("folders")
+}
+
+// =============================================================================
+// Files
+// =============================================================================
+
+enum FileStatus {
+  PENDING
+  INDEXED
+  ERROR
+  /// User has marked the file for deletion. It's hidden from
+  /// listings/viewers but still on disk and in the DB until an
+  /// admin approves the request and the bytes are actually removed.
+  PENDING_DELETE
+  /// Hard tombstone. The file no longer exists on the provider.
+  /// We keep the row briefly so audit + UI can show "removed."
+  DELETED
+}
+
+model File {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  archiveRootId String     @map("archive_root_id") @db.Uuid
+  folderId      String?    @map("folder_id") @db.Uuid
+  name          String
+  path          String     // Full relative path from archive root
+  mimeType      String?    @map("mime_type")
+  size          BigInt     @default(0)
+  hash          String?    // Content hash for deduplication
+  status        FileStatus @default(PENDING)
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+  indexedAt      DateTime?  @map("indexed_at")
+  fileCreatedAt DateTime?  @map("file_created_at") // Original file creation time
+  fileModifiedAt DateTime? @map("file_modified_at") // Original file modification time
+
+  // ─── Metadata model ─────────────────────────────────────────
+  //
+  // The on-disk JSON file at `{archiveRoot}/.harbor/items/{harborItemId}.json`
+  // is the canonical source of truth for ALL item metadata.
+  // The DB columns below are a derived index, kept in sync by the
+  // ArchiveMetadataService whenever the JSON is read or written.
+  // Any field that lives only in the JSON (people, adult_content,
+  // any custom field, AI fields, EXIF, etc.) is mirrored under the
+  // `meta` JsonB column for filter/search.
+  //
+  // The three high-traffic searchable fields — title, description,
+  // rating — are also kept as typed columns so the existing tsvector
+  // and rating filters keep working without unwrapping JSON on
+  // every query.
+  //
+  // `harborItemId` has a DB-level default of `gen_random_uuid()` so
+  // schema pushes against a non-empty existing database backfill
+  // every row automatically without data loss.
+  harborItemId  String    @unique @default(dbgenerated("gen_random_uuid()")) @map("harbor_item_id") @db.Uuid
+  meta          Json      @default("{}") @map("meta") @db.JsonB
+  title         String?
+  description   String?
+  rating        Int?      @db.SmallInt // 1-5
+  embedding     Unsupported("vector(1536)")? // For semantic search
+
+  archiveRoot ArchiveRoot @relation(fields: [archiveRootId], references: [id], onDelete: Cascade)
+  folder      Folder?     @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  tags        FileTag[]
+  metadataEdits FileMetadataEdit[]
+  previews    Preview[]
+  faces       Face[]
+  versions    FileVersion[]
+  comments    Comment[]   @relation("file_comments")
+  recentViews RecentView[]
+  deleteRequests DeleteRequest[]
+
+  // Full-text search
+  searchVector Unsupported("tsvector")? @map("search_vector")
+
+  @@unique([archiveRootId, path])
+  @@index([folderId])
+  @@index([archiveRootId])
+  @@index([mimeType])
+  @@index([hash])
+  @@index([status])
+  @@index([fileCreatedAt])
+  @@index([rating])
+  // GIN index on the JSON column for efficient field-level lookups
+  // (e.g. WHERE meta @> '{"adult_content":["explicit"]}').
+  @@index([meta], type: Gin)
+  @@map("files")
+}
+
+model FileVersion {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId    String   @map("file_id") @db.Uuid
+  version   Int
+  path      String   // Path to this version
+  size      BigInt   @default(0)
+  hash      String?
+  createdAt DateTime @default(now()) @map("created_at")
+  note      String?
+
+  file File @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([fileId, version])
+  @@map("file_versions")
+}
+
+// =============================================================================
+// Tags
+// =============================================================================
+
+model Tag {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique
+  color     String?  // Hex color for UI
+  category  String?  // e.g. "people", "location", "event", "subject"
+  usageCount Int     @default(0) @map("usage_count")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  fileTags   FileTag[]
+  folderTags FolderTag[]
+
+  @@index([name])
+  @@index([category])
+  @@map("tags")
+}
+
+model FileTag {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId    String   @map("file_id") @db.Uuid
+  tagId     String   @map("tag_id") @db.Uuid
+  source    String   @default("manual") // "manual", "ai", "import"
+  confidence Float?  // AI confidence 0-1
+  createdAt DateTime @default(now()) @map("created_at")
+
+  file File @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([fileId, tagId])
+  @@map("file_tags")
+}
+
+model FolderTag {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  folderId  String   @map("folder_id") @db.Uuid
+  tagId     String   @map("tag_id") @db.Uuid
+  source    String   @default("manual")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([folderId, tagId])
+  @@map("folder_tags")
+}
+
+// =============================================================================
+// Flexible Metadata Extension
+// =============================================================================
+
+model FolderMetadata {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  folderId String @map("folder_id") @db.Uuid
+  key      String
+  value    String
+  type     String @default("string")
+
+  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([folderId, key])
+  @@index([key])
+  @@map("folder_metadata")
+}
+
+// =============================================================================
+// Entity Relations / Linking
+// =============================================================================
+
+enum EntityType {
+  FILE
+  FOLDER
+}
+
+enum RelationType {
+  RELATED
+  ALTERNATE_VERSION
+  DERIVED_FROM
+  DUPLICATE_CANDIDATE
+  SAME_EVENT
+  SCAN_OF_SAME_SOURCE
+  CURATED_ASSOCIATION
+}
+
+model EntityRelation {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sourceType     EntityType   @map("source_type")
+  sourceId       String       @map("source_id") @db.Uuid
+  targetType     EntityType   @map("target_type")
+  targetId       String       @map("target_id") @db.Uuid
+  relationType   RelationType @map("relation_type")
+  isBidirectional Boolean     @default(true) @map("is_bidirectional")
+  confidence     Float?       // AI confidence 0-1, null for manual
+  source         String       @default("manual") // "manual", "ai", "import"
+  notes          String?
+  createdById    String?      @map("created_by_id") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  createdBy User? @relation("relation_created_by", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([sourceType, sourceId, targetType, targetId, relationType])
+  @@index([sourceType, sourceId])
+  @@index([targetType, targetId])
+  @@index([relationType])
+  @@map("entity_relations")
+}
+
+// =============================================================================
+// Previews & Thumbnails
+// =============================================================================
+
+enum PreviewSize {
+  THUMBNAIL  // 200px
+  SMALL      // 400px
+  MEDIUM     // 800px
+  LARGE      // 1600px
+  FULL       // Original dimensions
+}
+
+model Preview {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId    String      @map("file_id") @db.Uuid
+  size      PreviewSize
+  format    String      @default("webp") // "webp", "jpg", "png"
+  width     Int?
+  height    Int?
+  path      String      // Path in preview cache
+  byteSize  Int         @map("byte_size")
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  file File @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([fileId, size])
+  @@index([fileId])
+  @@map("previews")
+}
+
+// =============================================================================
+// Face Recognition
+// =============================================================================
+
+model Person {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String?
+  avatarUrl   String?  @map("avatar_url") // Admin-uploaded or auto-generated from best face crop
+  linkedUserId String? @unique @map("linked_user_id") @db.Uuid // Optional link to a registered User
+  isConfirmed Boolean  @default(false) @map("is_confirmed")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  faces      Face[]
+  linkedUser User? @relation("person_linked_user", fields: [linkedUserId], references: [id], onDelete: SetNull)
+
+  @@index([name])
+  @@map("persons")
+}
+
+model Face {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId     String   @map("file_id") @db.Uuid
+  personId   String?  @map("person_id") @db.Uuid
+  boundingBox Json    @map("bounding_box") // {x, y, width, height} normalized 0-1
+  confidence Float
+  embedding  Unsupported("vector(512)")? // Face embedding for clustering
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  file   File    @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  person Person? @relation(fields: [personId], references: [id], onDelete: SetNull)
+
+  @@index([fileId])
+  @@index([personId])
+  @@map("faces")
+}
+
+// =============================================================================
+// AI Usage Tracking
+// =============================================================================
+
+enum AiJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model AiJob {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String?     @map("user_id") @db.Uuid
+  provider      String      // "openai", "anthropic"
+  model         String      // "gpt-4o", "claude-sonnet-4-20250514", etc.
+  purpose       String      // "ocr", "tagging", "title_generation", "transcription", "face_detection", "embedding"
+  entityType    EntityType? @map("entity_type")
+  entityId      String?     @map("entity_id") @db.Uuid
+  status        AiJobStatus @default(QUEUED)
+  inputTokens   Int?        @map("input_tokens")
+  outputTokens  Int?        @map("output_tokens")
+  elapsedMs     Int?        @map("elapsed_ms")
+  estimatedCost Float?      @map("estimated_cost") // USD
+  error         String?
+  result        Json?       // Structured result data
+  createdAt     DateTime    @default(now()) @map("created_at")
+  startedAt     DateTime?   @map("started_at")
+  completedAt   DateTime?   @map("completed_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([purpose])
+  @@index([provider])
+  @@index([createdAt])
+  @@map("ai_jobs")
+}
+
+// =============================================================================
+// Background Jobs
+// =============================================================================
+
+enum BackgroundJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model BackgroundJob {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type        String              // "index", "preview", "ocr", "sync", "thumbnail", "face_detect"
+  entityType  EntityType?         @map("entity_type")
+  entityId    String?             @map("entity_id") @db.Uuid
+  status      BackgroundJobStatus @default(QUEUED)
+  progress    Float?              // 0-1
+  error       String?
+  metadata    Json?               // Job-specific metadata
+  createdAt   DateTime            @default(now()) @map("created_at")
+  startedAt   DateTime?           @map("started_at")
+  completedAt DateTime?           @map("completed_at")
+
+  @@index([type, status])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("background_jobs")
+}
+
+// =============================================================================
+// Audit Log
+// =============================================================================
+
+model AuditLog {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String?    @map("user_id") @db.Uuid
+  action     String     // "create", "update", "delete", "move", "rename", "link", "unlink"
+  entityType EntityType @map("entity_type")
+  entityId   String     @map("entity_id") @db.Uuid
+  before     Json?      // Snapshot before change
+  after      Json?      // Snapshot after change
+  ipAddress  String?    @map("ip_address")
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// =============================================================================
+// Metadata Edit History
+// =============================================================================
+
+model FileMetadataEdit {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId    String   @map("file_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  field     String
+  oldValue  String?  @map("old_value")
+  newValue  String?  @map("new_value")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  file File @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([fileId])
+  @@index([userId])
+  @@map("file_metadata_edits")
+}
+
+model FolderMetadataEdit {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  folderId  String   @map("folder_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  field     String
+  oldValue  String?  @map("old_value")
+  newValue  String?  @map("new_value")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([folderId])
+  @@index([userId])
+  @@map("folder_metadata_edits")
+}
+
+// =============================================================================
+// Comments
+// =============================================================================
+
+model Comment {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String     @map("user_id") @db.Uuid
+  entityType EntityType @map("entity_type")
+  fileId    String?    @map("file_id") @db.Uuid
+  folderId  String?    @map("folder_id") @db.Uuid
+  body      String
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  file   File?   @relation("file_comments", fields: [fileId], references: [id], onDelete: Cascade)
+  folder Folder? @relation("folder_comments", fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@index([fileId])
+  @@index([folderId])
+  @@index([userId])
+  @@map("comments")
+}
+
+// =============================================================================
+// System Settings (Harbor-wide configuration)
+// =============================================================================
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+// =============================================================================
+// User Preferences, Favorites, Saved Searches
+// =============================================================================
+
+model UserPreference {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  key    String
+  value  String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@map("user_preferences")
+}
+
+model Favorite {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String     @map("user_id") @db.Uuid
+  entityType EntityType @map("entity_type")
+  entityId   String     @map("entity_id") @db.Uuid
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, entityType, entityId])
+  @@index([userId])
+  @@map("favorites")
+}
+
+/// Delete-queue resolution. Tracks how an admin resolved a request.
+enum DeleteRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// "Mark for delete" queue.
+///
+/// When a regular user removes a file, the file is moved to
+/// `FileStatus.PENDING_DELETE` (so it disappears from listings) and
+/// a `DeleteRequest` row is created. The bytes stay on disk and the
+/// row stays in the DB until an admin explicitly approves the
+/// request from the admin "Delete Queue" page, at which point the
+/// file is hard-deleted from the provider AND the DB row.
+///
+/// We snapshot `fileSize`, `filePath`, and `fileName` so the queue
+/// can show meaningful "X items, Y bytes" stats even after the
+/// underlying file row has been hard-deleted on approval.
+model DeleteRequest {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId            String?             @map("file_id") @db.Uuid
+  archiveRootId     String              @map("archive_root_id") @db.Uuid
+  /// Snapshot of the file at request time, in case the file row gets
+  /// hard-deleted on approval and the queue needs to keep showing
+  /// what was removed and how much space it freed.
+  fileName          String              @map("file_name")
+  filePath          String              @map("file_path")
+  fileSize          BigInt              @default(0) @map("file_size")
+  fileMimeType      String?             @map("file_mime_type")
+  reason            String?
+  status            DeleteRequestStatus @default(PENDING)
+  requestedByUserId String              @map("requested_by_user_id") @db.Uuid
+  requestedAt       DateTime            @default(now()) @map("requested_at")
+  resolvedByUserId  String?             @map("resolved_by_user_id") @db.Uuid
+  resolvedAt        DateTime?           @map("resolved_at")
+
+  file            File?       @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  archiveRoot     ArchiveRoot @relation(fields: [archiveRootId], references: [id], onDelete: Cascade)
+  requestedBy     User        @relation("delete_requests_requested_by", fields: [requestedByUserId], references: [id], onDelete: Cascade)
+  resolvedBy      User?       @relation("delete_requests_resolved_by", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, requestedAt(sort: Desc)])
+  @@index([fileId])
+  @@index([requestedByUserId])
+  @@map("delete_requests")
+}
+
+/// User-specific recently-viewed history. Server-side so it follows
+/// the user across sessions, devices, and clients (the previous
+/// localStorage implementation didn't survive a browser-data clear
+/// and didn't sync across the web app + Electron app).
+model RecentView {
+  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  fileId   String   @map("file_id") @db.Uuid
+  viewedAt DateTime @default(now()) @map("viewed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  file File @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  // One row per (user, file) — re-viewing bumps `viewedAt`.
+  @@unique([userId, fileId])
+  @@index([userId, viewedAt(sort: Desc)])
+  @@map("recent_views")
+}
+
+model SavedSearch {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String
+  query     String
+  filters   Json     @default("{}") // Structured filter config
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("saved_searches")
+}
+
+model SearchLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  query       String   // Raw query text
+  filters     Json     @default("{}") // Structured snapshot of all active filters
+  resultCount Int      @map("result_count")
+  durationMs  Int      @map("duration_ms") // Server-side query time
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([query])
+  @@map("search_logs")
+}
+
+model Collection {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  name        String
+  description String?
+  color       String?  // Optional color for visual identity
+  isPrivate   Boolean  @default(true) @map("is_private")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CollectionItem[]
+
+  @@index([userId])
+  @@map("collections")
+}
+
+model CollectionItem {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  collectionId String     @map("collection_id") @db.Uuid
+  entityType   EntityType @map("entity_type")
+  entityId     String     @map("entity_id") @db.Uuid
+  addedAt      DateTime   @default(now()) @map("added_at")
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, entityType, entityId])
+  @@index([collectionId])
+  @@map("collection_items")
+}
+
+// =============================================================================
+// Configurable Metadata Fields
+// =============================================================================
+
+model MetadataFieldTemplate {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String   // Field display name
+  key          String   @unique // Machine key (e.g. "adult_content")
+  fieldType    String   @map("field_type") // text, textarea, select, multiselect, boolean, number, people
+  options      Json     @default("[]") // For select/multiselect: [{ value, label }]
+  required     Boolean  @default(false)
+  sortOrder    Int      @default(0) @map("sort_order")
+  appliesTo    String[] @default(["all"]) @map("applies_to") // ["all"], ["image"], ["video"], etc.
+  showInSearch Boolean  @default(false) @map("show_in_search") // Expose as a filter on the search page
+  hiddenByDefault Boolean @default(false) @map("hidden_by_default") // e.g. adult content: hidden until explicitly filtered
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([sortOrder])
+  @@map("metadata_field_templates")
+}

@@ -1,0 +1,7 @@
+---
+description: Testing standards
+globs: ["**/*"]
+alwaysApply: true
+---
+- Add or update tests for meaningful behavior changes.
+- Cover provider logic, permissions, metadata, relations, search, and destructive actions.

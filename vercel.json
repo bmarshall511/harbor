@@ -1,0 +1,20 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm turbo build --filter=@harbor/web",
+  "installCommand": "pnpm install",
+  "framework": "nextjs",
+  "outputDirectory": "apps/web/.next",
+  "crons": [
+    {
+      "path": "/api/cron/dropbox-sync",
+      "schedule": "*/15 * * * *"
+    }
+  ],
+  "functions": {
+    "apps/web/app/api/indexing/route.ts": { "maxDuration": 120 },
+    "apps/web/app/api/files/[id]/cache/route.ts": { "maxDuration": 60 },
+    "apps/web/app/api/face-detection/route.ts": { "maxDuration": 120 },
+    "apps/web/app/api/cron/dropbox-sync/route.ts": { "maxDuration": 120 },
+    "apps/web/app/api/events/route.ts": { "maxDuration": 900 }
+  }
+}
