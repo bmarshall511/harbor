@@ -1,23 +1,33 @@
 import { NextResponse } from 'next/server';
-import { execSync } from 'node:child_process';
-import * as path from 'node:path';
-import * as fs from 'node:fs';
 
 /**
  * GET /api/setup/database — Check if the database is initialized.
- * POST /api/setup/database — Initialize the database (schema + seed + search indexes).
+ * POST /api/setup/database — Seed default data and apply search indexes.
  *
- * This is an unauthenticated endpoint — it ONLY works when the database
- * has no tables yet (first-time setup). Once tables exist, it returns
- * 403 to prevent re-initialization.
+ * The database SCHEMA (tables, columns, indexes) is created during
+ * the build step via `prisma db push`. This endpoint only handles:
+ *   1. Seeding default roles, local user, and system settings
+ *   2. Applying the search foundation SQL (triggers + GIN indexes)
+ *
+ * Unauthenticated — only works when the database has no system
+ * settings yet (first-time setup). Returns 403 once initialized.
  */
 
 async function isDatabaseInitialized(): Promise<boolean> {
   try {
-    // Try to import Prisma and query a known table. If it throws
-    // (table doesn't exist), the DB is not initialized.
     const { db } = await import('@harbor/database');
-    await db.systemSetting.count();
+    const count = await db.systemSetting.count();
+    return count > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function doTablesExist(): Promise<boolean> {
+  try {
+    const { db } = await import('@harbor/database');
+    // If this query runs without error, the tables exist
+    await db.$queryRaw`SELECT 1 FROM system_settings LIMIT 0`;
     return true;
   } catch {
     return false;
@@ -25,8 +35,9 @@ async function isDatabaseInitialized(): Promise<boolean> {
 }
 
 export async function GET() {
-  const initialized = await isDatabaseInitialized();
-  return NextResponse.json({ initialized });
+  const tablesExist = await doTablesExist();
+  const initialized = tablesExist ? await isDatabaseInitialized() : false;
+  return NextResponse.json({ initialized, tablesExist });
 }
 
 export async function POST() {
@@ -34,113 +45,213 @@ export async function POST() {
   const initialized = await isDatabaseInitialized();
   if (initialized) {
     return NextResponse.json(
-      { message: 'Database is already initialized. This endpoint only works on first setup.' },
+      { message: 'Database is already initialized.' },
       { status: 403 },
     );
   }
 
-  const steps: Array<{ step: string; status: 'ok' | 'error'; message?: string }> = [];
-
-  // Find the schema path. In dev it's in the workspace root; in
-  // production builds it may be relative to the web app.
-  const schemaPath = resolveSchemaPath();
-  if (!schemaPath) {
+  // Check if tables exist (created during build via prisma db push)
+  const tablesExist = await doTablesExist();
+  if (!tablesExist) {
     return NextResponse.json({
-      message: 'Could not find Prisma schema file. Run setup from the project root.',
-      steps,
+      message: 'Database tables have not been created yet. This happens automatically during the build/deploy step. Try redeploying, or run "pnpm db:push" manually.',
+      steps: [{ step: 'Schema check', status: 'error', message: 'Tables not found — redeploy to create them' }],
     }, { status: 500 });
   }
 
-  // Step 1: prisma db push
-  try {
-    execSync(`npx prisma db push --schema="${schemaPath}" --skip-generate`, {
-      timeout: 60_000,
-      env: { ...process.env },
-      stdio: 'pipe',
-    });
-    steps.push({ step: 'Schema push', status: 'ok' });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    steps.push({ step: 'Schema push', status: 'error', message: msg });
-    return NextResponse.json({ message: 'Schema push failed', steps }, { status: 500 });
-  }
+  const steps: Array<{ step: string; status: 'ok' | 'error'; message?: string }> = [];
+  const { db } = await import('@harbor/database');
 
-  // Step 2: Generate Prisma client
+  // Step 1: Seed roles
   try {
-    execSync(`npx prisma generate --schema="${schemaPath}"`, {
-      timeout: 30_000,
-      env: { ...process.env },
-      stdio: 'pipe',
-    });
-    steps.push({ step: 'Client generation', status: 'ok' });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    steps.push({ step: 'Client generation', status: 'error', message: msg });
-    // Non-fatal — client may already be generated from build step
-  }
+    const roleData = [
+      {
+        name: 'Owner', systemRole: 'OWNER' as const, description: 'Full system access',
+        perms: [
+          { resource: 'files', action: 'read' }, { resource: 'files', action: 'write' },
+          { resource: 'files', action: 'delete' }, { resource: 'files', action: 'manage' },
+          { resource: 'metadata', action: 'read' }, { resource: 'metadata', action: 'write' },
+          { resource: 'tags', action: 'read' }, { resource: 'tags', action: 'write' },
+          { resource: 'tags', action: 'delete' },
+          { resource: 'relations', action: 'read' }, { resource: 'relations', action: 'write' },
+          { resource: 'relations', action: 'delete' },
+          { resource: 'admin', action: 'manage' }, { resource: 'users', action: 'manage' },
+          { resource: 'archive_roots', action: 'manage' },
+        ],
+      },
+      {
+        name: 'Admin', systemRole: 'ADMIN' as const, description: 'Administrative access',
+        perms: [
+          { resource: 'files', action: 'read' }, { resource: 'files', action: 'write' },
+          { resource: 'files', action: 'delete' },
+          { resource: 'metadata', action: 'read' }, { resource: 'metadata', action: 'write' },
+          { resource: 'tags', action: 'read' }, { resource: 'tags', action: 'write' },
+          { resource: 'tags', action: 'delete' },
+          { resource: 'relations', action: 'read' }, { resource: 'relations', action: 'write' },
+          { resource: 'relations', action: 'delete' },
+          { resource: 'admin', action: 'manage' }, { resource: 'archive_roots', action: 'manage' },
+        ],
+      },
+      {
+        name: 'Editor', systemRole: 'EDITOR' as const, description: 'Edit metadata and manage files',
+        perms: [
+          { resource: 'files', action: 'read' }, { resource: 'files', action: 'write' },
+          { resource: 'metadata', action: 'read' }, { resource: 'metadata', action: 'write' },
+          { resource: 'tags', action: 'read' }, { resource: 'tags', action: 'write' },
+          { resource: 'relations', action: 'read' }, { resource: 'relations', action: 'write' },
+        ],
+      },
+      {
+        name: 'Viewer', systemRole: 'VIEWER' as const, description: 'Read-only access',
+        perms: [
+          { resource: 'files', action: 'read' }, { resource: 'metadata', action: 'read' },
+          { resource: 'tags', action: 'read' }, { resource: 'relations', action: 'read' },
+        ],
+      },
+      {
+        name: 'Guest', systemRole: 'GUEST' as const, description: 'Very limited access',
+        perms: [{ resource: 'files', action: 'read' }, { resource: 'tags', action: 'read' }],
+      },
+    ];
 
-  // Step 3: Seed (roles, local user, system settings)
-  try {
-    // Run the seed script via tsx/ts-node. The seed file uses the
-    // Prisma client directly with nested creates for role permissions.
-    const seedPath = path.resolve(schemaPath, '..', '..', 'src', 'seed.ts');
-    if (fs.existsSync(seedPath)) {
-      execSync(`npx tsx "${seedPath}"`, {
-        timeout: 30_000,
-        env: { ...process.env },
-        stdio: 'pipe',
+    for (const role of roleData) {
+      await db.role.upsert({
+        where: { name: role.name },
+        create: {
+          name: role.name,
+          systemRole: role.systemRole,
+          description: role.description,
+          permissions: { createMany: { data: role.perms } },
+        },
+        update: {},
       });
     }
-    steps.push({ step: 'Seed data', status: 'ok' });
+    steps.push({ step: 'Roles', status: 'ok' });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    steps.push({ step: 'Seed data', status: 'error', message: msg });
-    return NextResponse.json({ message: 'Seed failed', steps }, { status: 500 });
+    steps.push({ step: 'Roles', status: 'error', message: err instanceof Error ? err.message : 'Failed' });
+    return NextResponse.json({ message: 'Failed to create roles', steps }, { status: 500 });
+  }
+
+  // Step 2: Create local user
+  try {
+    const ownerRole = await db.role.findFirst({ where: { systemRole: 'OWNER' } });
+    const localUser = await db.user.upsert({
+      where: { username: 'local' },
+      create: { username: 'local', displayName: 'Local User', isLocalUser: true, isActive: true },
+      update: {},
+    });
+    if (ownerRole) {
+      await db.userRoleAssignment.upsert({
+        where: { userId_roleId: { userId: localUser.id, roleId: ownerRole.id } },
+        create: { userId: localUser.id, roleId: ownerRole.id },
+        update: {},
+      });
+    }
+    steps.push({ step: 'Local user', status: 'ok' });
+  } catch (err: unknown) {
+    steps.push({ step: 'Local user', status: 'error', message: err instanceof Error ? err.message : 'Failed' });
+  }
+
+  // Step 3: Seed system settings
+  try {
+    const defaults: Record<string, string> = {
+      'auth.mode': 'local',
+      'preview.cacheDir': './data/preview-cache',
+      'ai.enabled': 'false',
+      'ai.faceRecognition': 'false',
+      'ai.defaultProvider': 'openai',
+      'log.level': 'info',
+      'indexing.ignorePatterns': '.gitkeep,.DS_Store,Thumbs.db,.harbor,desktop.ini,.Spotlight-V100,.Trashes,Icon,*.aae',
+      'registration.enabled': 'true',
+      'seo.allowCrawlers': 'false',
+    };
+    for (const [key, value] of Object.entries(defaults)) {
+      await db.systemSetting.upsert({
+        where: { key },
+        create: { key, value },
+        update: {},
+      });
+    }
+    steps.push({ step: 'Settings', status: 'ok' });
+  } catch (err: unknown) {
+    steps.push({ step: 'Settings', status: 'error', message: err instanceof Error ? err.message : 'Failed' });
   }
 
   // Step 4: Search foundation SQL (triggers + indexes)
   try {
-    const sqlPath = path.resolve(schemaPath, '..', 'sql', '001_search_foundation.sql');
-    if (fs.existsSync(sqlPath)) {
-      const { db } = await import('@harbor/database');
-      const sql = fs.readFileSync(sqlPath, 'utf-8');
-      // Split on semicolons and execute each statement
-      const statements = sql
-        .split(/;\s*$/m)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0 && !s.startsWith('--'));
-      for (const stmt of statements) {
-        try {
-          await db.$executeRawUnsafe(stmt);
-        } catch {
-          // Some statements may fail if already applied — continue
-        }
-      }
-      steps.push({ step: 'Search indexes', status: 'ok' });
-    } else {
-      steps.push({ step: 'Search indexes', status: 'ok', message: 'SQL file not found — skipped (not critical for first run)' });
-    }
+    // Create the search vector trigger function
+    await db.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION file_search_vector_update() RETURNS trigger AS $$
+      DECLARE
+        tag_names TEXT;
+        people_names TEXT;
+        people_arr jsonb;
+        elem jsonb;
+      BEGIN
+        SELECT string_agg(t.name, ' ') INTO tag_names
+          FROM file_tags ft JOIN tags t ON t.id = ft.tag_id WHERE ft.file_id = NEW.id;
+        people_names := '';
+        people_arr := NEW.meta -> 'fields' -> 'people';
+        IF people_arr IS NOT NULL AND jsonb_typeof(people_arr) = 'array' THEN
+          FOR elem IN SELECT * FROM jsonb_array_elements(people_arr) LOOP
+            IF elem ->> 'name' IS NOT NULL THEN
+              people_names := people_names || ' ' || (elem ->> 'name');
+            END IF;
+          END LOOP;
+        END IF;
+        NEW.search_vector :=
+          setweight(to_tsvector('english', coalesce(NEW.name, '')), 'A') ||
+          setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
+          setweight(to_tsvector('english', coalesce(NEW.description, '')), 'B') ||
+          setweight(to_tsvector('english', coalesce(NEW.meta -> 'fields' ->> 'caption', '')), 'B') ||
+          setweight(to_tsvector('english', coalesce(NEW.meta -> 'fields' ->> 'altText', '')), 'B') ||
+          setweight(to_tsvector('english', coalesce(NEW.meta -> 'fields' ->> 'aiTitle', '')), 'B') ||
+          setweight(to_tsvector('english', coalesce(NEW.meta -> 'fields' ->> 'aiDescription', '')), 'C') ||
+          setweight(to_tsvector('english', coalesce(NEW.meta -> 'fields' ->> 'ocrText', '')), 'C') ||
+          setweight(to_tsvector('english', coalesce(NEW.meta -> 'fields' ->> 'transcript', '')), 'C') ||
+          setweight(to_tsvector('english', coalesce(tag_names, '')), 'B') ||
+          setweight(to_tsvector('english', coalesce(people_names, '')), 'B');
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+
+    // Attach trigger
+    await db.$executeRawUnsafe(`DROP TRIGGER IF EXISTS files_search_vector_trigger ON files`);
+    await db.$executeRawUnsafe(`
+      CREATE TRIGGER files_search_vector_trigger BEFORE INSERT OR UPDATE ON files
+      FOR EACH ROW EXECUTE FUNCTION file_search_vector_update()
+    `);
+
+    // Tag-sync trigger
+    await db.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION file_tags_search_vector_sync() RETURNS trigger AS $$
+      BEGIN
+        IF TG_OP = 'DELETE' THEN
+          UPDATE files SET updated_at = now() WHERE id = OLD.file_id;
+        ELSE
+          UPDATE files SET updated_at = now() WHERE id = NEW.file_id;
+        END IF;
+        RETURN NULL;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await db.$executeRawUnsafe(`DROP TRIGGER IF EXISTS file_tags_search_sync ON file_tags`);
+    await db.$executeRawUnsafe(`
+      CREATE TRIGGER file_tags_search_sync AFTER INSERT OR DELETE ON file_tags
+      FOR EACH ROW EXECUTE FUNCTION file_tags_search_vector_sync()
+    `);
+
+    // GIN indexes
+    await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_files_search_vector ON files USING GIN (search_vector)`);
+    await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_files_name_trgm ON files USING GIN (name gin_trgm_ops)`);
+    await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_files_title_trgm ON files USING GIN (title gin_trgm_ops)`);
+
+    steps.push({ step: 'Search indexes', status: 'ok' });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    steps.push({ step: 'Search indexes', status: 'error', message: msg });
-    // Non-fatal — search will work but slower
+    steps.push({ step: 'Search indexes', status: 'error', message: err instanceof Error ? err.message : 'Failed' });
+    // Non-fatal — search works but slower without materialized vector
   }
 
-  return NextResponse.json({
-    message: 'Database initialized successfully',
-    steps,
-  });
-}
-
-function resolveSchemaPath(): string | null {
-  // Try common locations relative to the project
-  const candidates = [
-    path.resolve(process.cwd(), 'packages/database/prisma/schema.prisma'),
-    path.resolve(process.cwd(), '../../packages/database/prisma/schema.prisma'),
-    path.resolve(__dirname, '../../../../packages/database/prisma/schema.prisma'),
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
+  return NextResponse.json({ message: 'Database initialized successfully', steps });
 }

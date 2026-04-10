@@ -37,6 +37,7 @@ function LoginContent() {
 
   // Check if database is initialized
   const [dbInitialized, setDbInitialized] = useState<boolean | null>(null);
+  const [dbTablesExist, setDbTablesExist] = useState<boolean>(true);
   const [dbInitializing, setDbInitializing] = useState(false);
   const [dbInitSteps, setDbInitSteps] = useState<Array<{ step: string; status: string; message?: string }>>([]);
   const [dbInitError, setDbInitError] = useState<string | null>(null);
@@ -44,7 +45,10 @@ function LoginContent() {
   useEffect(() => {
     fetch('/api/setup/database')
       .then((res) => res.json())
-      .then((data) => setDbInitialized(data.initialized))
+      .then((data) => {
+        setDbInitialized(data.initialized);
+        setDbTablesExist(data.tablesExist ?? true);
+      })
       .catch(() => setDbInitialized(false));
   }, []);
 
@@ -196,8 +200,14 @@ function LoginContent() {
               )}
             </button>
 
+            {!dbTablesExist && (
+              <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+                <p className="font-medium">Database tables not found</p>
+                <p className="mt-1">Tables are created automatically during deployment. Try redeploying your app, or run <code className="rounded bg-amber-500/20 px-1">pnpm db:push</code> locally.</p>
+              </div>
+            )}
             <p className="mt-4 text-center text-[11px] text-muted-foreground">
-              Make sure your <code className="rounded bg-muted px-1">DATABASE_URL</code> is set correctly in <code className="rounded bg-muted px-1">.env</code> and the PostgreSQL server is running.
+              Make sure your <code className="rounded bg-muted px-1">DATABASE_URL</code> environment variable is set correctly and the database server is reachable.
             </p>
           </div>
         </div>
