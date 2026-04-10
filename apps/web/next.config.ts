@@ -14,6 +14,9 @@ const nextConfig: NextConfig = {
   ],
   serverExternalPackages: ['sharp', 'bcryptjs', 'bullmq'],
   outputFileTracingRoot: path.join(__dirname, '../..'),
+  outputFileTracingIncludes: {
+    '/**': ['./node_modules/.prisma/client/**', '../../node_modules/.prisma/client/**'],
+  },
   images: {
     remotePatterns: [
       { protocol: 'http', hostname: 'localhost' },
