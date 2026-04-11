@@ -326,19 +326,25 @@ function ArchiveEmptyState({ archiveRootId, isRootLevel }: { archiveRootId: stri
 
   const [reindexing, setReindexing] = useState(false);
 
-  const handleReindex = async () => {
+  const handleReindex = () => {
     setReindexing(true);
-    try {
-      await fetchApi('/indexing', {
-        method: 'POST',
-        body: JSON.stringify({ archiveRootId }),
-        retries: 2,
-      });
-      toast.success('Indexing started');
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to start indexing');
-    }
-    setReindexing(false);
+    // Fire the request but don't await — it runs synchronously on the
+    // server for up to 120s. The IndexingStatus component polls for
+    // progress. We just need to know the request was accepted.
+    fetch('/api/indexing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archiveRootId }),
+    }).then((res) => {
+      if (!res.ok) res.json().then((d) => toast.error(d.message ?? 'Failed'));
+    }).catch(() => {
+      toast.error('Failed to start indexing');
+    });
+    toast.success('Indexing started — progress will appear in the header');
+    // The reindexing state will be cleared when the jobs poll picks
+    // up the RUNNING status and the archive-browser shows its own
+    // indexing state.
+    setTimeout(() => setReindexing(false), 3000);
   };
 
   // Indexing is running

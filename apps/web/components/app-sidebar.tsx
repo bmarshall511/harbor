@@ -191,11 +191,13 @@ function ArchiveRootItem({
     <li role="treeitem" aria-expanded={expanded}>
       <ArchiveRootContextMenu
         root={root}
-        onReindex={async () => {
-          try {
-            await fetchApi('/indexing', { method: 'POST', body: JSON.stringify({ archiveRootId: root.id }), retries: 2 });
-            toast.success(`Re-indexing "${root.name}" started`);
-          } catch { /* error shown by fetchApi */ }
+        onReindex={() => {
+          fetch('/api/indexing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ archiveRootId: root.id }),
+          }).catch(() => {});
+          toast.success(`Re-indexing "${root.name}" started — progress in the header`);
         }}
       >
       <button

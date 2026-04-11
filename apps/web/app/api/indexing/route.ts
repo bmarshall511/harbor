@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { after } from 'next/server';
 import { IndexingJob } from '@harbor/jobs';
 import { requireAuth, requirePermission } from '@/lib/auth';
 import { getSecret } from '@/lib/secrets';
@@ -37,23 +36,17 @@ export async function POST(request: Request) {
       dropboxCredentials = { appKey, appSecret };
     }
 
-    // Use next/server `after()` to run indexing AFTER the response is
-    // sent but BEFORE the function is killed. On Vercel, this keeps
-    // the serverless function alive until the promise resolves (up to
-    // maxDuration seconds). Without this, Vercel kills the process
-    // as soon as the response is sent and indexing never completes.
+    // Run indexing synchronously — the response doesn't return until
+    // indexing completes. On Vercel this keeps the function alive for
+    // up to maxDuration (120s). Progress is written to the DB every
+    // 2 seconds so the UI's IndexingStatus component can poll it.
     const indexingJob = new IndexingJob();
-    after(async () => {
-      try {
-        await indexingJob.indexArchiveRoot(archiveRootId, auth.userId, dropboxCredentials);
-      } catch (err) {
-        console.error(`[Indexing] Failed for ${archiveRootId}:`, err);
-      }
-    });
+    await indexingJob.indexArchiveRoot(archiveRootId, auth.userId, dropboxCredentials);
 
-    return NextResponse.json({ message: 'Indexing started', archiveRootId });
+    return NextResponse.json({ message: 'Indexing complete', archiveRootId });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Failed';
+    console.error('[Indexing] Failed:', error);
+    const message = error instanceof Error ? error.message : 'Indexing failed';
     return NextResponse.json({ message }, { status: 500 });
   }
 }
