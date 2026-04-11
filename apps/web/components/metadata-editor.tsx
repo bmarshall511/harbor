@@ -180,6 +180,7 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
 
 function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   const queryClient = useQueryClient();
+  const invalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const initial = useMemo<string[]>(() => {
     const raw = file.meta?.fields?.[field.key];
@@ -189,11 +190,28 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
   }, [file, field.key]);
 
   const [selected, setSelected] = useState<string[]>(initial);
-  useEffect(() => { setSelected(initial); }, [initial]);
+  // Only sync from server when the file ID changes (navigating to
+  // a different file), NOT on every refetch — otherwise in-flight
+  // mutations get their local state stomped by stale server data.
+  const prevFileIdRef = useRef(file.id);
+  useEffect(() => {
+    if (prevFileIdRef.current !== file.id) {
+      setSelected(initial);
+      prevFileIdRef.current = file.id;
+    }
+  }, [file.id, initial]);
 
   const saveMutation = useMutation({
     mutationFn: (values: string[]) => filesApi.update(file.id, { [field.key]: values }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['file', file.id] }),
+    onSuccess: () => {
+      // Debounce the invalidation so rapid toggles (or concurrent
+      // edits from other fields) don't cause a refetch that resets
+      // another field's in-flight optimistic state.
+      if (invalidateTimerRef.current) clearTimeout(invalidateTimerRef.current);
+      invalidateTimerRef.current = setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['file', file.id] });
+      }, 1500);
+    },
     onError: (err: Error) => toast.error(err.message),
   });
 
@@ -243,7 +261,15 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   // Current selection persisted on this file
   const initial = useMemo<Person[]>(() => normalizePeople(file.meta?.fields?.[field.key]), [file, field.key]);
   const [selected, setSelected] = useState<Person[]>(initial);
-  useEffect(() => { setSelected(initial); }, [initial]);
+  // Only reset from server data when navigating to a different file,
+  // not on every refetch (which would stomp in-flight edits).
+  const prevFileIdRef = useRef(file.id);
+  useEffect(() => {
+    if (prevFileIdRef.current !== file.id) {
+      setSelected(initial);
+      prevFileIdRef.current = file.id;
+    }
+  }, [file.id, initial]);
 
   // Registered users (app accounts)
   const { data: registered = [] } = useQuery({
@@ -273,11 +299,17 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
     staleTime: 60_000,
   });
 
+  const saveInvalidateRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const save = useMutation({
     mutationFn: (people: Person[]) => filesApi.update(file.id, { [field.key]: people }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['file', file.id] });
-      queryClient.invalidateQueries({ queryKey: ['people-suggestions', field.key] });
+      // Debounce invalidation to prevent refetch from resetting
+      // other fields' in-flight edits (e.g. adult content).
+      if (saveInvalidateRef.current) clearTimeout(saveInvalidateRef.current);
+      saveInvalidateRef.current = setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['file', file.id] });
+        queryClient.invalidateQueries({ queryKey: ['people-suggestions', field.key] });
+      }, 1500);
     },
     onError: (err: Error) => toast.error(err.message),
   });
