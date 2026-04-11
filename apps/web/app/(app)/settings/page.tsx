@@ -1111,6 +1111,7 @@ function ArchiveRootCard({ root }: { root: { id: string; name: string; providerT
   const [cleanMetadata, setCleanMetadata] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(root.name);
+  const [showAccess, setShowAccess] = useState(false);
 
   const renameMutation = useMutation({
     mutationFn: () => archiveRoots.rename(root.id, editName),
@@ -1199,10 +1200,16 @@ function ArchiveRootCard({ root }: { root: { id: string; name: string; providerT
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {root.isPrivate && <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">Private</span>}
+          {root.isPrivate && <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">Restricted</span>}
           <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
             {root.providerType === 'DROPBOX' ? 'Dropbox' : 'Local'}
           </span>
+          <button
+            onClick={() => setShowAccess(!showAccess)}
+            className="rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            Access
+          </button>
           <button
             onClick={() => reindexMutation.mutate()}
             disabled={reindexMutation.isPending}
@@ -1233,6 +1240,9 @@ function ArchiveRootCard({ root }: { root: { id: string; name: string; providerT
           Indexing in progress...
         </div>
       )}
+
+      {/* User access panel */}
+      {showAccess && <ArchiveAccessPanel archiveRootId={root.id} onClose={() => setShowAccess(false)} />}
 
       {showRemove && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) setShowRemove(false); }} role="dialog" aria-modal="true">
@@ -1792,6 +1802,123 @@ function DeleteQueueRow({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function ArchiveAccessPanel({ archiveRootId, onClose }: { archiveRootId: string; onClose: () => void }) {
+  const queryClient = useQueryClient();
+
+  const { data: users } = useQuery({
+    queryKey: ['users'],
+    queryFn: async () => {
+      const res = await fetch('/api/users');
+      return res.json() as Promise<Array<{ id: string; username: string; displayName: string; isLocalUser: boolean }>>;
+    },
+  });
+
+  const { data: access, isLoading } = useQuery({
+    queryKey: ['archive-access', archiveRootId],
+    queryFn: async () => {
+      const res = await fetch(`/api/archive-roots/${archiveRootId}/access`);
+      return res.json() as Promise<{ isPrivate: boolean; userIds: string[] }>;
+    },
+  });
+
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+  const [initialized, setInitialized] = useState(false);
+
+  // Sync from server when loaded
+  useEffect(() => {
+    if (access && !initialized) {
+      setSelectedUserIds(new Set(access.userIds));
+      setInitialized(true);
+    }
+  }, [access, initialized]);
+
+  const saveMut = useMutation({
+    mutationFn: async (userIds: string[]) => {
+      const res = await fetch(`/api/archive-roots/${archiveRootId}/access`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userIds }),
+      });
+      if (!res.ok) throw new Error((await res.json()).message);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['archive-roots'] });
+      queryClient.invalidateQueries({ queryKey: ['archive-access', archiveRootId] });
+      toast.success('Access updated');
+      onClose();
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const realUsers = (users ?? []).filter((u) => !u.isLocalUser);
+  const allSelected = selectedUserIds.size === 0;
+
+  const toggleUser = (userId: string) => {
+    setSelectedUserIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-card/50 p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium">User Access</p>
+        <button onClick={onClose} className="text-[10px] text-muted-foreground hover:text-foreground">Close</button>
+      </div>
+
+      {isLoading ? (
+        <p className="text-xs text-muted-foreground">Loading...</p>
+      ) : (
+        <>
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={() => setSelectedUserIds(new Set())}
+              className="h-3.5 w-3.5 rounded border-input"
+            />
+            <span className={allSelected ? 'font-medium' : 'text-muted-foreground'}>Everyone (all users)</span>
+          </label>
+
+          {realUsers.length > 0 && (
+            <div className="space-y-1 pl-1">
+              <p className="text-[10px] text-muted-foreground">Or select specific users:</p>
+              {realUsers.map((user) => (
+                <label key={user.id} className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedUserIds.has(user.id)}
+                    onChange={() => toggleUser(user.id)}
+                    className="h-3.5 w-3.5 rounded border-input"
+                  />
+                  <span>{user.displayName}</span>
+                  <span className="text-[10px] text-muted-foreground">@{user.username}</span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={onClose} className="rounded-md border border-border px-3 py-1 text-[11px] text-muted-foreground hover:bg-accent">
+              Cancel
+            </button>
+            <button
+              onClick={() => saveMut.mutate([...selectedUserIds])}
+              disabled={saveMut.isPending}
+              className="rounded-md bg-primary px-3 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {saveMut.isPending ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

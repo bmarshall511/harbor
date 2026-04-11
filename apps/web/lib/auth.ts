@@ -73,11 +73,21 @@ export function requirePermission(ctx: AuthContext, resource: string, action: st
 }
 
 /**
- * Check if user can access an archive root (non-private, or has role access).
+ * Check if user can access an archive root.
+ * Non-private roots are visible to everyone. Private roots require
+ * either user-level or role-level access (or admin).
  */
-export function canAccessRoot(ctx: AuthContext, root: { isPrivate: boolean; accesses?: Array<{ roleId: string }> }): boolean {
+export function canAccessRoot(
+  ctx: AuthContext,
+  root: {
+    isPrivate: boolean;
+    accesses?: Array<{ roleId: string }>;
+    userAccesses?: Array<{ userId: string }>;
+  },
+): boolean {
   if (!root.isPrivate) return true;
   if (permissionService.isAdmin(ctx)) return true;
+  if (root.userAccesses?.some((a) => a.userId === ctx.userId)) return true;
   const userRoleIds = new Set(ctx.roles.map((r) => r.id));
   return root.accesses?.some((a) => userRoleIds.has(a.roleId)) ?? false;
 }

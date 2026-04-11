@@ -45,7 +45,8 @@ model User {
   providerTokens  ProviderToken[]
   deleteRequestsCreated  DeleteRequest[] @relation("delete_requests_requested_by")
   deleteRequestsResolved DeleteRequest[] @relation("delete_requests_resolved_by")
-  linkedPerson           Person?         @relation("person_linked_user")
+  linkedPerson           Person?                @relation("person_linked_user")
+  archiveRootAccesses    ArchiveRootUserAccess[]
 
   @@map("users")
 }
@@ -156,6 +157,7 @@ model ArchiveRoot {
   folders        Folder[]
   files          File[]
   accesses       ArchiveRootAccess[]
+  userAccesses   ArchiveRootUserAccess[]
   deleteRequests DeleteRequest[]
 
   @@index([providerType])
@@ -172,6 +174,18 @@ model ArchiveRootAccess {
 
   @@unique([archiveRootId, roleId])
   @@map("archive_root_accesses")
+}
+
+model ArchiveRootUserAccess {
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  archiveRootId String @map("archive_root_id") @db.Uuid
+  userId        String @map("user_id") @db.Uuid
+
+  archiveRoot ArchiveRoot @relation(fields: [archiveRootId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([archiveRootId, userId])
+  @@map("archive_root_user_accesses")
 }
 
 model ProviderToken {
