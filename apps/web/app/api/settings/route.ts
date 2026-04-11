@@ -9,8 +9,14 @@ export async function GET(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  const settings = await settingsRepo.getAll();
-  return NextResponse.json(settings);
+  try {
+    const settings = await settingsRepo.getAll();
+    return NextResponse.json(settings);
+  } catch (error: unknown) {
+    console.error('[Settings] Failed to load settings:', error);
+    // Return defaults so the app can still boot even if DB is momentarily unavailable
+    return NextResponse.json(SETTING_DEFAULTS);
+  }
 }
 
 /** PATCH /api/settings — Update one or more settings. Admin only. */

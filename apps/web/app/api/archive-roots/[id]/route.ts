@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ArchiveRootRepository, db } from '@harbor/database';
-import { fileWatcher } from '@harbor/jobs';
 import { requireAuth, requirePermission } from '@/lib/auth';
+import { isLocalMode } from '@/lib/deployment';
 import { audit } from '@/lib/audit';
 import { emit } from '@/lib/events';
 import { getSetting } from '@/lib/settings';
@@ -97,8 +97,13 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     select: { path: true },
   }).then((previews) => previews.map((p) => p.path));
 
-  // Stop file watcher before deletion
-  fileWatcher.unwatchRoot(id);
+  // Stop file watcher before deletion (local mode only)
+  if (isLocalMode) {
+    try {
+      const { fileWatcher } = await import('@harbor/jobs');
+      fileWatcher.unwatchRoot(id);
+    } catch { /* cloud mode — no watcher */ }
+  }
 
   // Delete the archive root — Prisma cascades to all child records
   await repo.delete(id);

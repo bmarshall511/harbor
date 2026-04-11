@@ -8,6 +8,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
+  try {
   const { id } = await params;
   const children = await repo.findChildren(id);
   return NextResponse.json(
@@ -33,4 +34,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       fileCount: f._count.files,
     })),
   );
+  } catch (error: unknown) {
+    console.error('[Folders] Children query failed:', error);
+    const message = error instanceof Error ? error.message : 'Failed to load folders';
+    return NextResponse.json({ message }, { status: 500 });
+  }
 }

@@ -10,8 +10,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  const { id } = await params;
-  const rawFiles = await repo.findByFolderId(id);
-  const files = await applyIgnoreFilter(rawFiles);
-  return NextResponse.json(files.map((f) => serializeFile(f)));
+  try {
+    const { id } = await params;
+    const rawFiles = await repo.findByFolderId(id);
+    const files = await applyIgnoreFilter(rawFiles);
+    return NextResponse.json(files.map((f) => serializeFile(f)));
+  } catch (error: unknown) {
+    console.error('[Files] Folder files query failed:', error);
+    const message = error instanceof Error ? error.message : 'Failed to load files';
+    return NextResponse.json({ message }, { status: 500 });
+  }
 }

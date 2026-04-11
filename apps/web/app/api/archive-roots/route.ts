@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ArchiveRootRepository } from '@harbor/database';
-import { fileWatcher } from '@harbor/jobs';
 import { requireAuth, requirePermission, canAccessRoot } from '@/lib/auth';
+import { isLocalMode } from '@/lib/deployment';
 
 const repo = new ArchiveRootRepository();
 
@@ -45,7 +45,11 @@ export async function POST(request: Request) {
 
     // Auto-start file watcher for new local roots
     if (root.providerType === 'LOCAL_FILESYSTEM') {
-      fileWatcher.watchRoot(root.id, root.rootPath);
+      if (isLocalMode && root.providerType === 'LOCAL_FILESYSTEM') {
+        import('@harbor/jobs').then(({ fileWatcher }) => {
+          fileWatcher.watchRoot(root.id, root.rootPath);
+        }).catch(() => {});
+      }
     }
 
     return NextResponse.json(root, { status: 201 });

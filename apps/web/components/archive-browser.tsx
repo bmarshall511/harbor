@@ -39,6 +39,7 @@ export function ArchiveBrowser({ archiveRootId }: { archiveRootId: string }) {
       activeFolderId
         ? folders.listChildren(activeFolderId)
         : folders.listRoot(archiveRootId),
+    retry: 2,
   });
 
   const { data: folderFiles, isLoading: filesLoading, error: filesError } = useQuery({
@@ -49,6 +50,7 @@ export function ArchiveBrowser({ archiveRootId }: { archiveRootId: string }) {
       activeFolderId
         ? files.listByFolder(activeFolderId)
         : files.listByArchiveRoot(archiveRootId),
+    retry: 2,
   });
 
   const isLoading = foldersLoading || filesLoading;
@@ -143,8 +145,14 @@ export function ArchiveBrowser({ archiveRootId }: { archiveRootId: string }) {
           </div>
           <h2 className="mt-4 text-lg font-semibold">Failed to load</h2>
           <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            {(foldersError as Error)?.message || (filesError as Error)?.message || 'Could not load files and folders. Check your connection and try again.'}
+            {(foldersError as Error)?.message || (filesError as Error)?.message || 'Could not load files and folders. This may be a temporary connection issue.'}
           </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            Retry
+          </button>
         </div>
       ) : isEmpty ? (
         <ArchiveEmptyState archiveRootId={archiveRootId} isRootLevel={!activeFolderId} />
