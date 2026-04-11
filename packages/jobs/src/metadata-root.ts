@@ -33,7 +33,10 @@ export function metaRootForArchive(
     return archiveRootPath;
   }
   // Dropbox + any future remote provider falls back to the
-  // server-side metadata cache.
-  const dataDir = process.env.HARBOR_DATA_DIR ?? './data';
+  // server-side metadata cache. On Vercel (cloud mode), ./data is
+  // read-only but /tmp is writable (512MB, ephemeral per function).
+  const isCloud = process.env.HARBOR_DEPLOYMENT_MODE === 'cloud';
+  const defaultDir = isCloud ? '/tmp/harbor-data' : './data';
+  const dataDir = process.env.HARBOR_DATA_DIR ?? defaultDir;
   return path.resolve(dataDir, 'harbor-meta', archiveRootId);
 }

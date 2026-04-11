@@ -209,18 +209,13 @@ export class IndexingJob {
               }
             }
 
-            // Resolve (or allocate) the stable Harbor item ID for
-            // this file. We do this BEFORE the upsert so the file
-            // row always has a `harborItemId` from the moment it
-            // exists. JSON storage works for any provider whose root
-            // path is on local disk; for Dropbox archives the path
-            // is the Dropbox local sync directory.
+            // Resolve (or allocate) the stable Harbor item ID.
+            // On Vercel, metadata JSON goes to /tmp (writable, ephemeral).
             const itemMetaRoot = metaRootForArchive(archiveRootId, archiveRootPath, provider.type);
             const itemId = await this.archiveMeta.getOrCreateItemId(itemMetaRoot, normalizedPath);
 
-            // Read whatever metadata already exists on disk so we
-            // mirror it into the DB row in the same upsert. New files
-            // get an empty meta object that we'll write back below.
+            // Read whatever metadata already exists so we mirror it
+            // into the DB row in the same upsert.
             const existingItem = await this.archiveMeta.readItemByUuid(itemMetaRoot, itemId);
             const itemPayload = existingItem ?? null;
 
