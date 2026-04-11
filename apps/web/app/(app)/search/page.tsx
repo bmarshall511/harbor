@@ -6,11 +6,7 @@
  * Every filter, the query, sort, and pagination are serialized into
  * flat query params so the URL is shareable and bookmarkable:
  *
- *   /search?q=sunset&tags=nature,vacation&people=Ben&sort=date&order=desc
- *
- * Typing in the search bar updates the URL (debounced), which triggers
- * a React Query fetch. Faceted counts load alongside results so the
- * filter bar always shows how many items each facet would return.
+ *   /search?q=sunset&tags=nature,vacation&mf_people=Ben&sort=date
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -19,19 +15,24 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Loader2,
   Search as SearchIcon,
-  SlidersHorizontal,
-  Bookmark,
-  BookmarkCheck,
+  X,
+  Clock,
+  Tags,
+  User,
+  FileImage,
+  FileVideo,
+  Sparkles,
 } from 'lucide-react';
 
-import { User } from 'lucide-react';
-import { search as searchApi } from '@/lib/api';
+import { search as searchApi, tags as tagsApi } from '@/lib/api';
+import { getPreviewUrl } from '@/lib/api';
 import { FileGrid } from '@/components/file-grid';
 import { FolderCards } from '@/components/folder-cards';
 import { EmptyState } from '@/components/empty-state';
 import { SearchFilterBar, type SearchFilters } from '@/components/search-filter-bar';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/cn';
+import { getMimeCategory } from '@harbor/utils';
 import type { SearchParams, SearchResponse } from '@harbor/types';
 
 export default function SearchPage() {
@@ -50,19 +51,15 @@ export default function SearchPage() {
 
 // ─── URL ↔ state helpers ──────────────────────────────────────────────────────
 
-/** Known URL param prefixes for dynamic meta fields: `mf_<key>=val1,val2` */
 const META_FIELD_PREFIX = 'mf_';
 
 function parseFiltersFromParams(params: URLSearchParams): SearchFilters {
-  // Parse dynamic metadata field filters from `mf_<key>` params
   const metaFields: Record<string, string[]> = {};
   params.forEach((value, key) => {
     if (key.startsWith(META_FIELD_PREFIX)) {
-      const fieldKey = key.slice(META_FIELD_PREFIX.length);
-      metaFields[fieldKey] = value.split(',').filter(Boolean);
+      metaFields[key.slice(META_FIELD_PREFIX.length)] = value.split(',').filter(Boolean);
     }
   });
-
   return {
     tags: params.get('tags')?.split(',').filter(Boolean) ?? [],
     mimeTypes: params.get('type')?.split(',').filter(Boolean) ?? [],
@@ -87,7 +84,6 @@ function filtersToParams(q: string, filters: SearchFilters, sort: string, order:
   if (filters.dateFrom) p.set('from', filters.dateFrom);
   if (filters.dateTo) p.set('to', filters.dateTo);
   if (filters.hasFaces) p.set('faces', '1');
-  // Dynamic meta field filters
   for (const [key, vals] of Object.entries(filters.metaFields)) {
     if (vals.length > 0) p.set(`${META_FIELD_PREFIX}${key}`, vals.join(','));
   }
@@ -97,24 +93,11 @@ function filtersToParams(q: string, filters: SearchFilters, sort: string, order:
   return p;
 }
 
-/**
- * Extract people names and adult content from the dynamic metaFields
- * so the API can handle them as first-class filters (they have
- * dedicated JSONB query paths in the repository).
- */
 function buildSearchParams(
-  q: string,
-  filters: SearchFilters,
-  sort: string,
-  order: string,
-  page: number,
-  limit: number,
+  q: string, filters: SearchFilters, sort: string, order: string, page: number, limit: number,
 ): SearchParams & { includeFacets: boolean } {
-  // People and adult_content are "well-known" meta field keys that
-  // map to dedicated API filter params for efficient JSONB querying.
   const people = filters.metaFields['people'] ?? [];
   const adultContent = filters.metaFields['adult_content'] ?? [];
-
   return {
     query: q,
     tags: filters.tags.length ? filters.tags : undefined,
@@ -129,9 +112,7 @@ function buildSearchParams(
     hasFaces: filters.hasFaces,
     sortBy: (sort as SearchParams['sortBy']) || 'relevance',
     sortOrder: (order as SearchParams['sortOrder']) || 'desc',
-    page,
-    limit,
-    includeFacets: true,
+    page, limit, includeFacets: true,
   };
 }
 
@@ -141,7 +122,6 @@ function SearchContent() {
   const router = useRouter();
   const params = useSearchParams();
 
-  // Parse initial state from URL
   const initialQ = params.get('q') ?? '';
   const initialFilters = parseFiltersFromParams(params);
   const initialSort = params.get('sort') ?? 'relevance';
@@ -156,17 +136,11 @@ function SearchContent() {
   const inputRef = useRef<HTMLInputElement>(null);
   const LIMIT = 60;
 
-  // Only log a search after the user stops typing for 2 seconds.
-  // This prevents logging every keystroke (n, na, nak, nake, naked).
-  // Filter/sort/page changes set it immediately since those are
-  // intentional discrete actions, not intermediate keystrokes.
   const [shouldLog, setShouldLog] = useState(false);
   const logTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Focus the input on mount
   useEffect(() => { inputRef.current?.focus(); }, []);
 
-  // Determine if we should search (need either a query or at least one filter)
   const hasQuery = query.trim().length > 0;
   const hasMetaFilters = Object.values(filters.metaFields).some((v) => v.length > 0);
   const hasFilters = !!(
@@ -177,7 +151,6 @@ function SearchContent() {
   );
   const shouldSearch = hasQuery || hasFilters;
 
-  // URL sync — push changes to the URL on every state change.
   useEffect(() => {
     const p = filtersToParams(query, filters, sort, order, page);
     const newSearch = p.toString();
@@ -187,7 +160,6 @@ function SearchContent() {
     }
   }, [query, filters, sort, order, page, router]);
 
-  // Browse context for the lightbox
   const setBrowseContext = useAppStore((s) => s.setBrowseContext);
   const clearBrowseContext = useAppStore((s) => s.clearBrowseContext);
 
@@ -202,10 +174,9 @@ function SearchContent() {
     enabled: shouldSearch,
     placeholderData: (prev) => prev,
     staleTime: 30_000,
+    retry: 2,
   });
 
-  // Reset shouldLog after it's been consumed so it doesn't re-log
-  // on subsequent cache-hit re-renders.
   useEffect(() => {
     if (shouldLog && data) setShouldLog(false);
   }, [shouldLog, data]);
@@ -217,21 +188,15 @@ function SearchContent() {
   const hasMore = data?.hasMore ?? false;
   const isEmpty = shouldSearch && !isLoading && files.length === 0 && folders.length === 0;
 
-  // Set browse context for lightbox
   useEffect(() => {
-    if (files.length > 0) {
-      setBrowseContext('Search results', files);
-    }
+    if (files.length > 0) setBrowseContext('Search results', files);
     return () => clearBrowseContext();
   }, [files, setBrowseContext, clearBrowseContext]);
 
-  // Reset page when query or filters change.
-  // Query changes use a 2s debounce before enabling logging.
-  // Filter changes log immediately (intentional discrete actions).
   const handleQueryChange = useCallback((newQ: string) => {
     setQuery(newQ);
     setPage(1);
-    setShouldLog(false); // Don't log intermediate keystrokes
+    setShouldLog(false);
     if (logTimerRef.current) clearTimeout(logTimerRef.current);
     logTimerRef.current = setTimeout(() => setShouldLog(true), 2000);
   }, []);
@@ -239,31 +204,60 @@ function SearchContent() {
   const handleFiltersChange = useCallback((newFilters: SearchFilters) => {
     setFilters(newFilters);
     setPage(1);
-    setShouldLog(true); // Filter changes are intentional — log immediately
+    setShouldLog(true);
   }, []);
 
   return (
-    <div className="flex flex-col">
-      {/* ── Header ──────────────────────────────────────────────── */}
-      <div className="border-b border-border">
-        {/* Search input */}
-        <div className="flex items-center gap-3 px-4 py-3">
-          <div className="relative flex-1">
-            <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+    <div className="flex h-full flex-col">
+      {/* ── Search header ──────────────────────────────────────── */}
+      <div className="border-b border-border bg-card/50">
+        {/* Large centered search input */}
+        <div className="mx-auto max-w-2xl px-4 pt-6 pb-4">
+          <div className="relative">
+            <SearchIcon className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
             <input
               ref={inputRef}
               value={query}
               onChange={(e) => handleQueryChange(e.target.value)}
-              placeholder="Search files, tags, people, metadata…"
-              className="w-full rounded-lg border border-border bg-background py-2.5 pl-10 pr-4 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Search files, tags, people, metadata..."
+              className="w-full rounded-xl border border-border bg-background py-3.5 pl-12 pr-12 text-base shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
               aria-label="Search"
             />
+            {query && (
+              <button
+                onClick={() => handleQueryChange('')}
+                className="absolute right-12 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
             {isFetching && (
-              <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+              <Loader2 className="absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
             )}
           </div>
+        </div>
 
-          {/* Sort */}
+        {/* People avatar strip */}
+        <PeopleAvatarStrip
+          selectedPeople={filters.metaFields['people'] ?? []}
+          onToggle={(name) => {
+            const current = filters.metaFields['people'] ?? [];
+            const next = current.includes(name)
+              ? current.filter((n) => n !== name)
+              : [...current, name];
+            handleFiltersChange({ ...filters, metaFields: { ...filters.metaFields, people: next } });
+          }}
+        />
+
+        {/* Filter bar + sort */}
+        <div className="flex items-center gap-2 px-4 pb-3">
+          <div className="flex-1">
+            <SearchFilterBar
+              filters={filters}
+              onFiltersChange={handleFiltersChange}
+              facets={facets ? { tags: facets.tags, people: facets.people, mimeTypes: facets.mimeTypes } : undefined}
+            />
+          </div>
           <select
             value={`${sort}-${order}`}
             onChange={(e) => {
@@ -271,7 +265,7 @@ function SearchContent() {
               setSort(s);
               setOrder(o);
             }}
-            className="hidden sm:block h-10 rounded-lg border border-border bg-background px-3 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            className="hidden sm:block h-8 rounded-lg border border-border bg-background px-2 text-[11px] text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label="Sort"
           >
             <option value="relevance-desc">Most relevant</option>
@@ -283,76 +277,58 @@ function SearchContent() {
           </select>
         </div>
 
-        {/* People quick-select — horizontal avatar strip */}
-        <PeopleAvatarStrip
-          selectedPeople={filters.metaFields['people'] ?? []}
-          onToggle={(name) => {
-            const current = filters.metaFields['people'] ?? [];
-            const next = current.includes(name)
-              ? current.filter((n) => n !== name)
-              : [...current, name];
-            handleFiltersChange({
-              ...filters,
-              metaFields: { ...filters.metaFields, people: next },
-            });
-          }}
-        />
-
-        {/* Filter bar */}
-        <div className="px-4 pb-3">
-          <SearchFilterBar
-            filters={filters}
-            onFiltersChange={handleFiltersChange}
-            facets={facets ? {
-              tags: facets.tags,
-              people: facets.people,
-              mimeTypes: facets.mimeTypes,
-            } : undefined}
-          />
-        </div>
-
-        {/* Result count */}
+        {/* Result summary bar */}
         {shouldSearch && !isLoading && (
-          <div className="border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
-            {total.toLocaleString()} {total === 1 ? 'result' : 'results'}
-            {query && <> for &ldquo;{query}&rdquo;</>}
+          <div className="border-t border-border bg-muted/30 px-4 py-1.5">
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>
+                {total.toLocaleString()} {total === 1 ? 'result' : 'results'}
+                {query && <> for <strong className="text-foreground">&ldquo;{query}&rdquo;</strong></>}
+                {facets && facets.totalFiles > 0 && (
+                  <> &middot; {facets.mimeTypes.slice(0, 3).map((m) => `${m.count} ${m.value.split('/')[0]}`).join(', ')}</>
+                )}
+              </span>
+              <span className="tabular-nums">{data?.page ?? 1} of {Math.ceil(total / LIMIT) || 1}</span>
+            </div>
           </div>
         )}
       </div>
 
       {/* ── Results ─────────────────────────────────────────────── */}
-      <div className="flex-1 p-4">
+      <div className="flex-1 overflow-y-auto">
+        {/* Idle state — show suggestions */}
         {!shouldSearch && (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="rounded-full bg-muted p-4">
-              <SearchIcon className="h-8 w-8 text-muted-foreground" />
-            </div>
-            <h2 className="mt-4 text-lg font-semibold">Search Harbor</h2>
+          <SearchIdleState
+            onSearch={(q) => handleQueryChange(q)}
+            onTagClick={(tag) => handleFiltersChange({ ...filters, tags: [...filters.tags, tag] })}
+          />
+        )}
+
+        {/* Loading */}
+        {isLoading && shouldSearch && (
+          <div className="flex flex-col items-center justify-center py-16 gap-3">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <p className="text-xs text-muted-foreground">Searching...</p>
+          </div>
+        )}
+
+        {/* Empty */}
+        {isEmpty && (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <SearchIcon className="h-10 w-10 text-muted-foreground/20" />
+            <h3 className="mt-4 text-base font-semibold">No results found</h3>
             <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-              Search across all your files, metadata, tags, and people.
-              Use the filters above to narrow results.
+              {query ? `Nothing matched "${query}"` : 'No files match the current filters'}.
+              Try different keywords or broaden your filters.
             </p>
           </div>
         )}
 
-        {isLoading && shouldSearch && (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        )}
-
-        {isEmpty && (
-          <EmptyState
-            icon={SearchIcon}
-            title="No results"
-            description={`Nothing matched${query ? ` "${query}"` : ''} with the current filters. Try broadening your search.`}
-          />
-        )}
-
+        {/* Results */}
         {!isLoading && !isEmpty && shouldSearch && (
-          <div className="space-y-6">
+          <div className="p-4 space-y-6">
             {folders.length > 0 && (
-              <section aria-label="Matching folders">
+              <section>
                 <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                   Folders ({folders.length})
                 </h2>
@@ -360,10 +336,10 @@ function SearchContent() {
               </section>
             )}
             {files.length > 0 && (
-              <section aria-label="Matching files">
+              <section>
                 {folders.length > 0 && (
                   <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                    Files ({data?.total ?? files.length})
+                    Files ({total})
                   </h2>
                 )}
                 <FileGrid files={files} />
@@ -372,23 +348,23 @@ function SearchContent() {
 
             {/* Pagination */}
             {(hasMore || page > 1) && (
-              <div className="flex items-center justify-center gap-2 pt-4">
+              <div className="flex items-center justify-center gap-3 pt-4 pb-8">
                 <button
                   type="button"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  onClick={() => { setPage((p) => Math.max(1, p - 1)); window.scrollTo(0, 0); }}
                   disabled={page <= 1}
-                  className="rounded-md border border-border px-3 py-1.5 text-xs disabled:opacity-40"
+                  className="rounded-lg border border-border px-4 py-2 text-sm font-medium disabled:opacity-40 hover:bg-accent"
                 >
                   Previous
                 </button>
-                <span className="text-xs text-muted-foreground">
-                  Page {page}
+                <span className="text-sm text-muted-foreground tabular-nums">
+                  Page {page} of {Math.ceil(total / LIMIT) || 1}
                 </span>
                 <button
                   type="button"
-                  onClick={() => setPage((p) => p + 1)}
+                  onClick={() => { setPage((p) => p + 1); window.scrollTo(0, 0); }}
                   disabled={!hasMore}
-                  className="rounded-md border border-border px-3 py-1.5 text-xs disabled:opacity-40"
+                  className="rounded-lg border border-border px-4 py-2 text-sm font-medium disabled:opacity-40 hover:bg-accent"
                 >
                   Next
                 </button>
@@ -401,12 +377,116 @@ function SearchContent() {
   );
 }
 
-/**
- * Horizontal avatar strip — shows known people as clickable circles.
- * Clicking a person toggles them as a search filter. Selected people
- * get a ring highlight. This gives users a visual, one-tap way to
- * filter by person without opening the filter popover.
- */
+// ─── Idle state — shown before the user types anything ────────────────────────
+
+function SearchIdleState({
+  onSearch,
+  onTagClick,
+}: {
+  onSearch: (q: string) => void;
+  onTagClick: (tag: string) => void;
+}) {
+  // Popular tags
+  const { data: allTags } = useQuery({
+    queryKey: ['tags'],
+    queryFn: () => tagsApi.list(),
+    staleTime: 60_000,
+  });
+  const topTags = (allTags ?? []).slice(0, 12);
+
+  // Recent searches (user's own)
+  const { data: recentSearches } = useQuery({
+    queryKey: ['recent-searches-idle'],
+    queryFn: async () => {
+      try {
+        const res = await fetch('/api/admin/search-analytics');
+        if (!res.ok) return [];
+        const data = await res.json();
+        return [...new Set(
+          (data.recentLogs ?? [])
+            .filter((l: { query: string }) => l.query)
+            .map((l: { query: string }) => l.query),
+        )].slice(0, 6) as string[];
+      } catch { return []; }
+    },
+    staleTime: 60_000,
+  });
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-12 space-y-10">
+      {/* Hero */}
+      <div className="text-center">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+          <SearchIcon className="h-7 w-7 text-primary" />
+        </div>
+        <h2 className="mt-4 text-xl font-semibold">Search your archive</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Search across files, metadata, tags, people, transcripts, and AI descriptions.
+        </p>
+      </div>
+
+      {/* Recent searches */}
+      {recentSearches && recentSearches.length > 0 && (
+        <div>
+          <h3 className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <Clock className="h-3 w-3" /> Recent searches
+          </h3>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {recentSearches.map((q) => (
+              <button
+                key={q}
+                onClick={() => onSearch(q)}
+                className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Popular tags */}
+      {topTags.length > 0 && (
+        <div>
+          <h3 className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <Tags className="h-3 w-3" /> Popular tags
+          </h3>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {topTags.map((tag) => (
+              <button
+                key={tag.id}
+                onClick={() => onTagClick(tag.name)}
+                className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
+              >
+                {tag.color && (
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: tag.color }} />
+                )}
+                {tag.name}
+                <span className="text-muted-foreground">{tag.usageCount}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tips */}
+      <div className="rounded-xl border border-border bg-card/50 p-4">
+        <h3 className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <Sparkles className="h-3 w-3" /> Search tips
+        </h3>
+        <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+          <li>Use the filter pills above to narrow by type, tags, people, or date</li>
+          <li>Click a person avatar to quickly filter by who appears in files</li>
+          <li>Search works across filenames, titles, tags, people, AI descriptions, and OCR text</li>
+          <li>Results update as you type — press Enter or use Cmd+K for quick search</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// ─── People avatar strip ──────────────────────────────────────────────────────
+
 function PeopleAvatarStrip({
   selectedPeople,
   onToggle,
@@ -420,10 +500,7 @@ function PeopleAvatarStrip({
       const res = await fetch('/api/persons');
       if (!res.ok) return [];
       return res.json() as Promise<Array<{
-        id: string;
-        name: string | null;
-        avatarUrl: string | null;
-        faceCount: number;
+        id: string; name: string | null; avatarUrl: string | null; faceCount: number;
       }>>;
     },
     staleTime: 60_000,
@@ -447,25 +524,15 @@ function PeopleAvatarStrip({
             title={person.name!}
             className={cn(
               'group relative flex shrink-0 flex-col items-center gap-1 rounded-lg px-2 py-1.5 transition',
-              isSelected
-                ? 'bg-primary/10'
-                : 'hover:bg-accent',
+              isSelected ? 'bg-primary/10' : 'hover:bg-accent',
             )}
           >
-            <div
-              className={cn(
-                'flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border-2 transition',
-                isSelected
-                  ? 'border-primary shadow-md shadow-primary/20'
-                  : 'border-transparent group-hover:border-border',
-              )}
-            >
+            <div className={cn(
+              'flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border-2 transition',
+              isSelected ? 'border-primary shadow-md shadow-primary/20' : 'border-transparent group-hover:border-border',
+            )}>
               {person.avatarUrl ? (
-                <img
-                  src={person.avatarUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
+                <img src={person.avatarUrl} alt="" className="h-full w-full object-cover" />
               ) : (
                 <div className="flex h-full w-full items-center justify-center bg-muted text-muted-foreground">
                   <User className="h-4 w-4" />
