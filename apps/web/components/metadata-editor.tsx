@@ -61,6 +61,9 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['file', file.id] });
       queryClient.invalidateQueries({ queryKey: ['files'] });
+      queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+      queryClient.invalidateQueries({ queryKey: ['recently-viewed-resolved'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       setEditing(false);
       toast.success('Saved');
     },
@@ -204,12 +207,16 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
   const saveMutation = useMutation({
     mutationFn: (values: string[]) => filesApi.update(file.id, { [field.key]: values }),
     onSuccess: () => {
-      // Debounce the invalidation so rapid toggles (or concurrent
-      // edits from other fields) don't cause a refetch that resets
-      // another field's in-flight optimistic state.
+      // Debounce the invalidation so rapid toggles don't cause
+      // competing refetches. Also refresh list queries so cards
+      // show the updated title/tags/people immediately.
       if (invalidateTimerRef.current) clearTimeout(invalidateTimerRef.current);
       invalidateTimerRef.current = setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ['file', file.id] });
+        queryClient.invalidateQueries({ queryKey: ['files'] });
+        queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+        queryClient.invalidateQueries({ queryKey: ['recently-viewed-resolved'] });
+        queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       }, 1500);
     },
     onError: (err: Error) => toast.error(err.message),
@@ -309,6 +316,10 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
       saveInvalidateRef.current = setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ['file', file.id] });
         queryClient.invalidateQueries({ queryKey: ['people-suggestions', field.key] });
+        queryClient.invalidateQueries({ queryKey: ['files'] });
+        queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+        queryClient.invalidateQueries({ queryKey: ['recently-viewed-resolved'] });
+        queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       }, 1500);
     },
     onError: (err: Error) => toast.error(err.message),

@@ -64,7 +64,10 @@ export function useRealtime(): RealtimeStatus {
         }
       }
 
-      // Metadata events
+      // Metadata events — invalidate both the individual file/folder
+      // AND the list queries that embed file data (recommendations,
+      // recently viewed, dashboard, file listings) so title/tag/people
+      // changes show up immediately across all cards.
       if (type === 'metadata.updated') {
         if (payload.entityType === 'FILE' && payload.entityId) {
           queryClient.invalidateQueries({ queryKey: ['file', payload.entityId] });
@@ -72,6 +75,10 @@ export function useRealtime(): RealtimeStatus {
         if (payload.entityType === 'FOLDER' && payload.entityId) {
           queryClient.invalidateQueries({ queryKey: ['folder', payload.entityId] });
         }
+        queryClient.invalidateQueries({ queryKey: ['files'] });
+        queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+        queryClient.invalidateQueries({ queryKey: ['recently-viewed-resolved'] });
+        queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       }
 
       // Tag events
