@@ -149,14 +149,9 @@ function ImpersonationBanner() {
 
   if (!isImpersonating) return null;
 
-  const handleStop = async () => {
-    try {
-      const res = await fetch('/api/admin/impersonate/stop', { method: 'POST' });
-      if (!res.ok) throw new Error('Failed');
-      window.location.href = '/settings?s=users';
-    } catch {
-      toast.error('Failed to end impersonation');
-    }
+  const handleStop = () => {
+    // Navigate to the stop endpoint which sets cookies via redirect
+    window.location.href = '/api/admin/impersonate/stop';
   };
 
   return (

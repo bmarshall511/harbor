@@ -5,7 +5,11 @@ import { randomUUID } from 'node:crypto';
 
 /**
  * POST /api/admin/impersonate — Login as another user.
- * Body: { userId: string }
+ *
+ * Returns a redirect URL that the client should navigate to.
+ * The redirect URL is a GET endpoint that sets the session cookie
+ * via a proper HTTP redirect response — this is more reliable than
+ * setting cookies via fetch() Set-Cookie headers.
  */
 export async function POST(request: Request) {
   const auth = await requireAuth(request);
@@ -30,28 +34,23 @@ export async function POST(request: Request) {
     },
   });
 
-  // Get the admin's current session token from the cookie
+  // Store the admin's current session and the new token in a temporary
+  // record so the GET redirect can set both cookies in one response.
   const currentSession = request.headers.get('cookie')
     ?.split(';')
     .map((c) => c.trim())
     .find((c) => c.startsWith('harbor-session='))
     ?.split('=')[1];
 
-  const isSecure = process.env.NODE_ENV === 'production';
-  const cookieOpts = `; HttpOnly; Path=/; SameSite=Lax; Max-Age=86400${isSecure ? '; Secure' : ''}`;
+  // Store in a temp table or just pass via URL-safe encoding
+  // For simplicity, encode both tokens in the redirect URL
+  const payload = Buffer.from(JSON.stringify({
+    newToken: token,
+    adminToken: currentSession ?? '',
+  })).toString('base64url');
 
-  const response = NextResponse.json({
+  return NextResponse.json({
     ok: true,
-    impersonating: { id: targetUser.id, username: targetUser.username, displayName: targetUser.displayName },
+    redirectUrl: `/api/admin/impersonate/activate?p=${payload}`,
   });
-
-  // Save the admin's session as a backup cookie
-  if (currentSession) {
-    response.headers.append('Set-Cookie', `harbor-admin-session=${currentSession}${cookieOpts}`);
-  }
-
-  // Set the new impersonated session cookie
-  response.headers.append('Set-Cookie', `harbor-session=${token}${cookieOpts}`);
-
-  return response;
 }

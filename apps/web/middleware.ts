@@ -16,9 +16,10 @@ export function middleware(request: NextRequest) {
   if (
     pathname === '/login' ||
     pathname.startsWith('/api/auth/') ||
+    pathname.startsWith('/api/admin/impersonate/') || // Cookie-setting redirects
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/favicon') ||
-    pathname === '/api/events' // SSE needs to handle its own auth
+    pathname === '/api/events'
   ) {
     return NextResponse.next();
   }
