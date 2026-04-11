@@ -101,6 +101,7 @@ function RecentThumb({ file, onOpen }: { file: FileDto; onOpen: () => void }) {
             alt=""
             loading="lazy"
             className="h-full w-full object-cover"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">

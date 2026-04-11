@@ -214,6 +214,10 @@ function RecommendationCard({
               alt=""
               loading="lazy"
               className="h-full w-full object-cover"
+              onError={(e) => {
+                // Hide broken image, show the muted background
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">

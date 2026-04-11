@@ -329,16 +329,17 @@ function Thumb({
       className="group overflow-hidden rounded-lg border border-border bg-background transition-all hover:-translate-y-px hover:border-primary/30 hover:shadow-md"
     >
       <div className="aspect-square bg-muted">
-        {hasPreview || cat === 'image' ? (
+        {hasPreview || cat === 'image' || cat === 'video' ? (
           <img
             src={getPreviewUrl(file.id, 'THUMBNAIL')}
             alt=""
             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
             loading="lazy"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
-            <TypeIcon category={cat === 'video' ? 'Videos' : cat === 'audio' ? 'Audio' : 'Documents'} />
+            <TypeIcon category={cat === 'audio' ? 'Audio' : 'Documents'} />
           </div>
         )}
       </div>

@@ -108,7 +108,9 @@ function FileGridItem({ file, allFiles }: { file: FileDto; allFiles?: FileDto[] 
   const isSelected = selectedFileIds.has(file.id);
   const category = getMimeCategory(file.mimeType);
   const Icon = MIME_ICONS[category] ?? File;
-  const hasThumbnail = file.previews?.length > 0 || category === 'image';
+  // Always try to load thumbnails for images and videos — even without
+  // preview records, the Dropbox thumbnail API can generate them on the fly.
+  const hasThumbnail = file.previews?.length > 0 || category === 'image' || category === 'video';
   const isVideo = category === 'video';
   const isViewable = category === 'image' || category === 'video';
   const [hovering, setHovering] = useState(false);
@@ -176,7 +178,8 @@ function FileGridItem({ file, allFiles }: { file: FileDto; allFiles?: FileDto[] 
         {hasThumbnail ? (
           <>
             <img src={getPreviewUrl(file.id, 'THUMBNAIL')} alt={(file.meta?.fields?.altText as string | undefined) ?? file.name}
-              className={cn('h-full w-full object-cover', hovering && isVideo && 'opacity-0')} loading="lazy" />
+              className={cn('h-full w-full object-cover', hovering && isVideo && 'opacity-0')} loading="lazy"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             {hovering && isVideo && (
               <video ref={videoHoverRef} src={`/api/files/${file.id}/stream`} muted autoPlay loop playsInline
                 className="absolute inset-0 h-full w-full object-cover" />
