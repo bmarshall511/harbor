@@ -109,7 +109,7 @@ function RecentThumb({ file, onOpen }: { file: FileDto; onOpen: () => void }) {
         )}
       </div>
       <p className="truncate px-1.5 py-1 text-[10px] font-medium">
-        {friendlyName(file.title ?? file.name)}
+        {file.title ?? friendlyName(file.name)}
       </p>
     </button>
   );

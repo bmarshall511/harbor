@@ -136,7 +136,8 @@ export function RecommendationStrip({
               <RecommendationCard
                 key={it.file.id}
                 fileId={it.file.id}
-                name={it.file.title ?? it.file.name}
+                title={it.file.title}
+                name={it.file.name}
                 mimeType={it.file.mimeType}
                 reasons={it.reasons}
                 onOpen={() => openDetailPanel('file', it.file.id)}
@@ -163,7 +164,8 @@ export function RecommendationStrip({
             <RecommendationCard
               key={it.file.id}
               fileId={it.file.id}
-              name={it.file.title ?? it.file.name}
+              title={it.file.title}
+                name={it.file.name}
               mimeType={it.file.mimeType}
               reasons={it.reasons}
               onOpen={() => openDetailPanel('file', it.file.id)}
@@ -177,17 +179,20 @@ export function RecommendationStrip({
 
 function RecommendationCard({
   fileId,
+  title,
   name,
   mimeType,
   reasons,
   onOpen,
 }: {
   fileId: string;
+  title?: string | null;
   name: string;
   mimeType: string | null;
   reasons: string[];
   onOpen: () => void;
 }) {
+  const displayName = title ?? friendlyName(name);
   const cat = getMimeCategory(mimeType);
   const isImage = cat === 'image' || cat === 'video';
   return (
@@ -221,8 +226,8 @@ function RecommendationCard({
             </div>
           )}
         </div>
-        <p className="truncate px-1.5 py-1 text-[10px] font-medium" title={name}>
-          {friendlyName(name)}
+        <p className="truncate px-1.5 py-1 text-[10px] font-medium" title={displayName}>
+          {displayName}
         </p>
       </button>
       <div className="absolute right-1 top-1 z-10 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
