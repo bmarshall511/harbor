@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { IndexingJob } from '@harbor/jobs';
 import { requireAuth, requirePermission } from '@/lib/auth';
 import { getSecret } from '@/lib/secrets';
 import { ArchiveRootRepository } from '@harbor/database';
 
-const indexingJob = new IndexingJob();
+export const maxDuration = 120;
+
 const rootRepo = new ArchiveRootRepository();
 
 export async function POST(request: Request) {
@@ -20,7 +22,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: 'archiveRootId is required' }, { status: 400 });
     }
 
-    // For Dropbox roots, resolve credentials before passing to the job
     const root = await rootRepo.findById(archiveRootId);
     if (!root) {
       return NextResponse.json({ message: 'Archive root not found' }, { status: 404 });
@@ -36,9 +37,18 @@ export async function POST(request: Request) {
       dropboxCredentials = { appKey, appSecret };
     }
 
-    // Run indexing in background
-    indexingJob.indexArchiveRoot(archiveRootId, auth.userId, dropboxCredentials).catch((err: unknown) => {
-      console.error(`Indexing failed for ${archiveRootId}:`, err);
+    // Use next/server `after()` to run indexing AFTER the response is
+    // sent but BEFORE the function is killed. On Vercel, this keeps
+    // the serverless function alive until the promise resolves (up to
+    // maxDuration seconds). Without this, Vercel kills the process
+    // as soon as the response is sent and indexing never completes.
+    const indexingJob = new IndexingJob();
+    after(async () => {
+      try {
+        await indexingJob.indexArchiveRoot(archiveRootId, auth.userId, dropboxCredentials);
+      } catch (err) {
+        console.error(`[Indexing] Failed for ${archiveRootId}:`, err);
+      }
     });
 
     return NextResponse.json({ message: 'Indexing started', archiveRootId });
