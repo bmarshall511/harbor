@@ -16,13 +16,20 @@ function createClient(): PrismaClient {
   // Reuse the pool across hot-reloads in dev (prevents connection exhaustion).
   // In production serverless, each cold start gets its own pool.
   if (!globalForPrisma.pool) {
+    const isSupabase = connectionString.includes('supabase.com');
     globalForPrisma.pool = new pg.Pool({
       connectionString,
-      // Serverless-friendly pool settings: small pool, short idle timeout.
-      // PgBouncer (Supabase) handles the real connection pooling.
-      max: 5,
-      idleTimeoutMillis: 30_000,
+      // On serverless (Vercel), each function invocation may be a new
+      // container. Supabase's connection pooler (Supavisor) handles
+      // real pooling, so our local pool should be minimal: 1 connection
+      // per function instance, released quickly.
+      max: isSupabase ? 1 : 5,
+      idleTimeoutMillis: isSupabase ? 10_000 : 30_000,
       connectionTimeoutMillis: 10_000,
+      // Supabase requires SSL connections.
+      ssl: isSupabase || connectionString.includes('sslmode=require')
+        ? { rejectUnauthorized: false }
+        : undefined,
     });
   }
 
