@@ -46,6 +46,14 @@ export class IndexingJob {
       const ignoreStr = await settingsRepo.get('indexing.ignorePatterns', '');
       this.ignorePatterns = ignoreStr.split(',').map((p) => p.trim()).filter(Boolean);
 
+      // For Dropbox archives: pull any existing .harbor/index.json from
+      // Dropbox into the local cache BEFORE indexing starts. This ensures
+      // metadata written by another instance (local or cloud) is picked
+      // up and not overwritten with empty defaults.
+      if (root.providerType === 'DROPBOX') {
+        await this.pullDropboxMetadata(provider, root.id, root.rootPath);
+      }
+
       // Mark the start time so we can clean up stale entries after indexing
       const indexStartTime = new Date();
 
@@ -69,6 +77,11 @@ export class IndexingJob {
       // Clean up stale entries from previous indexing runs (orphaned paths, old absolute paths, etc.)
       await this.fileRepo.deleteStale(root.id, indexStartTime);
       await this.folderRepo.deleteStale(root.id, indexStartTime);
+
+      // Push updated metadata back to Dropbox (new UUIDs, updated index)
+      if (root.providerType === 'DROPBOX') {
+        await this.pushDropboxMetadata(provider, root.id, root.rootPath);
+      }
 
       const fileCount = await db.file.count({ where: { archiveRootId: root.id } });
       const folderCount = await db.folder.count({ where: { archiveRootId: root.id } });
@@ -305,6 +318,105 @@ export class IndexingJob {
       foldersProcessed: this._foldersProcessed,
       currentPath: this._currentPath,
     }).catch(() => {});
+  }
+
+  /**
+   * Push .harbor/ metadata files TO Dropbox after indexing so other
+   * Harbor instances pick up new UUIDs and metadata.
+   */
+  private async pushDropboxMetadata(
+    provider: StorageProvider,
+    archiveRootId: string,
+    archiveRootPath: string,
+  ): Promise<void> {
+    const metaRoot = metaRootForArchive(archiveRootId, archiveRootPath, 'remote');
+    const fsp = await import('node:fs/promises');
+    const pathMod = await import('node:path');
+
+    try {
+      const dropboxProvider = provider as import('@harbor/providers').DropboxProvider;
+
+      // Upload index.json
+      const indexLocalPath = pathMod.join(metaRoot, '.harbor', 'index.json');
+      try {
+        const indexData = await fsp.readFile(indexLocalPath);
+        const indexDropboxPath = `${archiveRootPath}/.harbor/index.json`.replace(/\/\//g, '/');
+        await dropboxProvider.writeFile(indexDropboxPath, Buffer.from(indexData));
+      } catch { /* no index to push */ }
+
+      // Upload all item JSONs that were created/updated during this indexing
+      const itemsDir = pathMod.join(metaRoot, '.harbor', 'items');
+      try {
+        const files = await fsp.readdir(itemsDir);
+        let pushed = 0;
+        for (const file of files) {
+          if (!file.endsWith('.json')) continue;
+          try {
+            const data = await fsp.readFile(pathMod.join(itemsDir, file));
+            const dropboxPath = `${archiveRootPath}/.harbor/items/${file}`.replace(/\/\//g, '/');
+            await dropboxProvider.writeFile(dropboxPath, Buffer.from(data));
+            pushed++;
+          } catch { /* skip individual failures */ }
+        }
+        if (pushed > 0) {
+          console.log(`[Indexing] Pushed ${pushed} metadata files to Dropbox`);
+        }
+      } catch { /* items dir doesn't exist */ }
+    } catch (err) {
+      console.error('[Indexing] Failed to push metadata to Dropbox:', err);
+    }
+  }
+
+  /**
+   * Pull .harbor/ metadata files from Dropbox into the local cache
+   * before indexing. This ensures metadata written by another Harbor
+   * instance is picked up during indexing.
+   *
+   * Downloads: .harbor/index.json and all .harbor/items/*.json
+   */
+  private async pullDropboxMetadata(
+    provider: StorageProvider,
+    archiveRootId: string,
+    archiveRootPath: string,
+  ): Promise<void> {
+    const metaRoot = metaRootForArchive(archiveRootId, archiveRootPath, 'remote');
+    const fsp = await import('node:fs/promises');
+    const pathMod = await import('node:path');
+
+    // Ensure the cache directories exist
+    const itemsDir = pathMod.join(metaRoot, '.harbor', 'items');
+    await fsp.mkdir(itemsDir, { recursive: true });
+
+    // Try to read index.json from Dropbox
+    try {
+      const dropboxProvider = provider as import('@harbor/providers').DropboxProvider;
+      const indexDropboxPath = `${archiveRootPath}/.harbor/index.json`.replace(/\/\//g, '/');
+      const indexData = await dropboxProvider.readFile(indexDropboxPath);
+      await fsp.writeFile(pathMod.join(metaRoot, '.harbor', 'index.json'), indexData);
+
+      // Parse the index to find all item UUIDs
+      const index = JSON.parse(indexData.toString('utf-8')) as { paths: Record<string, string> };
+      const uuids = [...new Set(Object.values(index.paths ?? {}))];
+
+      // Download each item JSON (batch, max 50 to stay within time limits)
+      let downloaded = 0;
+      for (const uuid of uuids.slice(0, 200)) {
+        try {
+          const itemPath = `${archiveRootPath}/.harbor/items/${uuid}.json`.replace(/\/\//g, '/');
+          const itemData = await dropboxProvider.readFile(itemPath);
+          await fsp.writeFile(pathMod.join(itemsDir, `${uuid}.json`), itemData);
+          downloaded++;
+        } catch {
+          // Item file doesn't exist in Dropbox yet — skip
+        }
+      }
+      if (downloaded > 0) {
+        console.log(`[Indexing] Pulled ${downloaded} metadata files from Dropbox`);
+      }
+    } catch {
+      // No .harbor/ in Dropbox yet — first time. That's fine.
+      console.log('[Indexing] No existing .harbor/ metadata in Dropbox — starting fresh');
+    }
   }
 
   private shouldIgnore(name: string): boolean {

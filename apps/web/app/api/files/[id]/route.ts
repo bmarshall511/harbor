@@ -6,6 +6,7 @@ import { requireAuth, requirePermission } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { emit } from '@/lib/events';
 import { serializeFile } from '@/lib/file-dto';
+import { syncMetadataToDropbox } from '@/lib/dropbox-metadata-sync';
 
 const fileRepo = new FileRepository();
 const rootRepo = new ArchiveRootRepository();
@@ -92,6 +93,21 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     },
     { core, fields },
   );
+
+  // Step 1b — sync the metadata JSON to Dropbox so it's visible on
+  // all devices and deployments. This runs fire-and-forget so it
+  // doesn't block the response. The JSON written in step 1 is the
+  // canonical content; this just uploads it to Dropbox.
+  if (root.providerType === 'DROPBOX') {
+    const itemJson = JSON.stringify(item, null, 2);
+    syncMetadataToDropbox(before.archiveRootId, `items/${before.harborItemId}.json`, itemJson)
+      .catch((err) => console.error('[MetaSync] Dropbox item sync failed:', err));
+
+    // Also sync the index.json so other instances can find the UUID
+    const index = await archiveMeta.readIndex(metaRoot);
+    syncMetadataToDropbox(before.archiveRootId, 'index.json', JSON.stringify(index, null, 2))
+      .catch((err) => console.error('[MetaSync] Dropbox index sync failed:', err));
+  }
 
   // Step 2 — sync the derived DB columns from the freshly-written JSON.
   await fileRepo.update(id, fileUpdatePayloadFromJson(item));
