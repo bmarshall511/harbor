@@ -23,35 +23,49 @@ Harbor lets you browse, organize, search, and enrich your file archives with AI-
 - **Dark/Light Mode** — Full design token parity, respects system preference
 - **Accessibility** — AAA target, full keyboard support, screen reader semantics, reduced motion
 
-## Quick Start (Local Development)
+## Quick Start
 
 ### Prerequisites
 
 - Node.js >= 22
 - pnpm >= 9
-- Docker (for PostgreSQL)
+- A [Supabase](https://supabase.com) project (free tier works)
 
-### Setup
+### 1. Set Up Supabase
+
+Harbor uses Supabase (hosted PostgreSQL) as its database. Both local development and cloud (Vercel) deployments share the same database — this means metadata, archives, and settings stay in sync everywhere.
+
+See the [Supabase setup instructions](#set-up-supabase) below for how to create a project, find your connection strings, and enable extensions.
+
+### 2. Install and configure
 
 ```bash
 # Clone and install
 git clone <repo-url> harbor && cd harbor
 cp .env.example .env
 pnpm install
+```
 
-# Start PostgreSQL
-docker compose up -d
+Edit `.env` and fill in your Supabase connection strings:
 
-# Start development
+```env
+DATABASE_URL="postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres"
+DIRECT_URL="postgresql://postgres:[password]@db.[ref].supabase.co:5432/postgres"
+HARBOR_SESSION_SECRET="generate-a-random-64-char-string"
+HARBOR_DEPLOYMENT_MODE="local"
+```
+
+Also copy the same `DATABASE_URL` and `DIRECT_URL` to `packages/database/.env` (Prisma CLI reads from there).
+
+### 3. Start development
+
+```bash
 pnpm dev
 ```
 
-On first launch, Harbor detects that the database is empty and shows a **setup wizard** in the browser. Click **"Initialize Database"** to automatically:
-1. Create all tables (Prisma schema push)
-2. Seed default roles, settings, and local user
-3. Set up full-text search indexes and triggers
+On first launch, Harbor detects an empty database and shows a **setup wizard**. Click **"Initialize Database"** to automatically create all tables, seed default roles and settings, and set up search indexes.
 
-No manual `prisma` commands needed. The dev server automatically finds a free port — the URL is printed in the console.
+The dev server automatically finds a free port — the URL is printed in the console.
 
 ### Dev Scripts
 
@@ -66,12 +80,12 @@ No manual `prisma` commands needed. The dev server automatically finds a free po
 
 1. Go to Settings > Archive Roots
 2. Click "Add Archive Root"
-3. Enter a name and the absolute path to a directory (local) or connect your Dropbox account (cloud)
+3. Enter a name and the absolute path to a directory (local) or connect your Dropbox account
 4. The directory will be indexed and files will appear in the browser
 
 ## Deploy to Vercel (Cloud Mode)
 
-Harbor can run entirely on Vercel with Dropbox as the storage provider. Local filesystem archives are disabled in cloud mode.
+Harbor can also run on Vercel with Dropbox as the storage provider. Local filesystem archives are disabled in cloud mode. Both local and Vercel share the same Supabase database, so metadata edits on either side are instantly visible everywhere.
 
 ### 1. Set Up Supabase
 
@@ -116,9 +130,9 @@ You need **two** connection strings — one for runtime (pooled) and one for mig
 
 ### 2. Prepare the Database
 
-The database is initialized automatically on first visit — no manual CLI commands needed.
+If you already ran the setup wizard during local development (same Supabase project), the database is already initialized — skip to step 3.
 
-After deploying to Vercel (step 3 below), visit your app URL. Harbor will detect the empty database and show a **setup wizard**. Click **"Initialize Database"** to automatically create all tables, seed default roles and settings, and set up search indexes.
+If this is a fresh Supabase project, the database will be initialized automatically on first visit via the setup wizard.
 
 > **Note:** The three PostgreSQL extensions (`vector`, `pgcrypto`, `pg_trgm`) must be enabled manually in the Supabase SQL Editor BEFORE running the setup wizard, because they require superuser privileges. See step 1 above.
 
@@ -137,10 +151,12 @@ In Vercel > Project Settings > Environment Variables:
 | Variable | Value | Required |
 |----------|-------|----------|
 | `HARBOR_DEPLOYMENT_MODE` | `cloud` | Yes |
-| `DATABASE_URL` | Supabase **pooled** connection string (port **6543**) — used at runtime | Yes |
-| `DIRECT_URL` | Supabase **direct** connection string (port **5432**) — used during build for schema migrations | Yes |
-| `HARBOR_SESSION_SECRET` | Random 64+ character string | Yes |
+| `DATABASE_URL` | Same Supabase **pooled** connection string as your local `.env` (port **6543**) | Yes |
+| `DIRECT_URL` | Same Supabase **direct** connection string as your local `.env` (port **5432**) | Yes |
+| `HARBOR_SESSION_SECRET` | Same value as your local `.env` (so sessions work across both) | Yes |
 | `CRON_SECRET` | Random string for cron auth | Yes |
+
+> **Important:** Use the SAME `DATABASE_URL`, `DIRECT_URL`, and `HARBOR_SESSION_SECRET` on both local and Vercel. This ensures both instances share the same database and sessions.
 
 > **Note:** Dropbox and AI API keys are configured through the Settings UI after your first login — they are stored in an encrypted database table, NOT as environment variables.
 
@@ -194,14 +210,17 @@ Harbor automatically syncs Dropbox changes:
 
 ## Deployment Modes
 
+Both modes share the same Supabase database. Metadata edits on either side are instantly visible everywhere.
+
 | Feature | Local (`HARBOR_DEPLOYMENT_MODE=local`) | Cloud (`HARBOR_DEPLOYMENT_MODE=cloud`) |
 |---------|---------------------------------------|---------------------------------------|
+| Database | Supabase (shared) | Supabase (shared) |
 | Local filesystem archives | Yes | No |
 | Dropbox archives | Yes | Yes |
-| File watcher (local) | Yes | No |
-| Dropbox change polling | Yes (60s loop) | Yes (15min cron) |
+| File watcher (local FS) | Yes | No |
+| Dropbox change polling | Yes (60s loop) | Yes (daily cron) |
 | Preview generation (ffmpeg) | Yes | No (uses Dropbox thumbnails) |
-| Metadata JSON storage | Local disk | Dropbox API |
+| Metadata sync | JSON in archive + Dropbox API | Dropbox API + DB |
 | Face detection (AI) | Yes | Yes |
 | Multi-user | Yes | Yes |
 
