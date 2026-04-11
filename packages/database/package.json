@@ -6,10 +6,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.ts"
-  },
-  "prisma": {
-    "schema": "prisma/schema.prisma"
+    "./client": "./src/client.ts",
+    "./generated/*": "./generated/*"
   },
   "scripts": {
     "db:generate": "prisma generate",

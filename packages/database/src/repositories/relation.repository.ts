@@ -1,5 +1,5 @@
 import { db } from '../client';
-import type { EntityType, RelationType } from '@prisma/client';
+import type { EntityType, RelationType } from '../../generated/prisma/client';
 
 export class RelationRepository {
   async findByEntity(entityType: EntityType, entityId: string) {

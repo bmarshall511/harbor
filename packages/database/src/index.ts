@@ -1,6 +1,6 @@
 export { db } from './client';
 export * from './repositories/index';
-// Re-export Prisma for safe SQL composition (`Prisma.sql`,
-// `Prisma.empty`) without forcing every consumer package to add
-// `@prisma/client` as a direct dependency.
-export { Prisma } from '@prisma/client';
+// Re-export Prisma namespace (for `Prisma.sql`, `Prisma.empty`, etc.)
+// and all generated types/enums so consumers don't need a direct
+// `@prisma/client` dependency.
+export * from '../generated/prisma/client';

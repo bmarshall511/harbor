@@ -1,5 +1,5 @@
 import { db } from '../client';
-import type { EntityType, Prisma } from '@prisma/client';
+import type { EntityType, Prisma } from '../../generated/prisma/client';
 
 export class AuditLogRepository {
   async log(data: {

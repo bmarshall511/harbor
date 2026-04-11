@@ -7,7 +7,7 @@ import { ArchiveMetadataService } from '@harbor/providers';
 import { isImageMime, isVideoMime, isPdfMime } from '@harbor/utils';
 import { JobManager } from './job-manager';
 import { metaRootForArchive } from './metadata-root';
-import type { PreviewSize } from '@prisma/client';
+import type { PreviewSize } from '@harbor/database';
 
 const execFileAsync = promisify(execFile);
 

@@ -14,9 +14,9 @@ const nextConfig: NextConfig = {
   ],
   serverExternalPackages: ['sharp', 'bcryptjs', 'bullmq'],
   outputFileTracingRoot: path.join(__dirname, '../..'),
-  outputFileTracingIncludes: {
-    '/**': ['./node_modules/.prisma/client/**', '../../node_modules/.prisma/client/**'],
-  },
+  // No Prisma outputFileTracingIncludes needed: the new prisma-client
+  // generator (v6.16+) embeds WASM as base64 inside JS files, so there
+  // are no standalone .wasm files that need tracing into the bundle.
   images: {
     remotePatterns: [
       { protocol: 'http', hostname: 'localhost' },

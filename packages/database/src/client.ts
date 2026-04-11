@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 
@@ -18,8 +18,19 @@ function createClient(): PrismaClient {
   });
 }
 
-export const db = globalForPrisma.prisma ?? createClient();
+// Lazy initialization — the client is only created when first accessed.
+// This prevents test files that import @harbor/database types from
+// crashing when DATABASE_URL is not set in the test environment.
+let _db: PrismaClient | undefined;
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = db;
-}
+export const db = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    if (!_db) {
+      _db = globalForPrisma.prisma ?? createClient();
+      if (process.env.NODE_ENV !== 'production') {
+        globalForPrisma.prisma = _db;
+      }
+    }
+    return (_db as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});

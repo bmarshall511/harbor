@@ -1,5 +1,5 @@
 import { db } from '../client';
-import type { FileStatus, Prisma } from '@prisma/client';
+import type { FileStatus, Prisma } from '../../generated/prisma/client';
 
 /**
  * Statuses that should be EXCLUDED from any "user-visible" file
