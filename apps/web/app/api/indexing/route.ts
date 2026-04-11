@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { IndexingJob } from '@harbor/jobs';
 import { requireAuth, requirePermission } from '@/lib/auth';
 import { getSecret } from '@/lib/secrets';
-import { ArchiveRootRepository } from '@harbor/database';
+import { ArchiveRootRepository, db } from '@harbor/database';
 
 export const maxDuration = 120;
 
@@ -35,6 +35,17 @@ export async function POST(request: Request) {
       }
       dropboxCredentials = { appKey, appSecret };
     }
+
+    // Cancel any existing RUNNING or QUEUED index jobs for this archive
+    // so re-indexing restarts instead of queueing a duplicate.
+    await db.backgroundJob.updateMany({
+      where: {
+        type: 'index',
+        status: { in: ['RUNNING', 'QUEUED'] },
+        metadata: { path: ['archiveRootId'], equals: archiveRootId },
+      },
+      data: { status: 'FAILED', error: 'Cancelled — re-index requested', completedAt: new Date() },
+    });
 
     // Run indexing synchronously — the response doesn't return until
     // indexing completes. On Vercel this keeps the function alive for
