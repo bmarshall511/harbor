@@ -16,6 +16,13 @@ export class IndexingJob {
   private archiveMeta = new ArchiveMetadataService();
   private ignorePatterns: string[] = [];
 
+  // Progress tracking — updated during indexDirectory, periodically
+  // flushed to the background_jobs table so the UI can poll it.
+  private _jobId: string | null = null;
+  private _filesProcessed = 0;
+  private _foldersProcessed = 0;
+  private _lastProgressUpdate = 0;
+
   async indexArchiveRoot(archiveRootId: string, userId?: string, dropboxCredentials?: { appKey: string; appSecret: string }): Promise<void> {
     const root = await this.rootRepo.findById(archiveRootId);
     if (!root) throw new Error(`Archive root ${archiveRootId} not found`);
@@ -27,6 +34,10 @@ export class IndexingJob {
     });
 
     try {
+      this._jobId = jobId;
+      this._filesProcessed = 0;
+      this._foldersProcessed = 0;
+      this._lastProgressUpdate = Date.now();
       await this.jobManager.markRunning(jobId);
 
       // Load global ignore patterns from settings
@@ -64,6 +75,8 @@ export class IndexingJob {
       if (fileCount === 0 && folderCount === 0) {
         await this.jobManager.markFailed(jobId, `No files or folders found at path "${root.rootPath}". Check the path and provider connection.`);
       } else {
+        // Set progress to 1.0 and store final counts
+        await this.jobManager.updateProgress(jobId, 1.0);
         await this.jobManager.markCompleted(jobId);
 
         // Auto-generate preview thumbnails for local archives
@@ -163,6 +176,8 @@ export class IndexingJob {
               ...(parentFolderId ? { parent: { connect: { id: parentFolderId } } } : {}),
             });
 
+            this._foldersProcessed++;
+
             // Sync folder metadata from .harbor/folders/{path}/meta.json
             // for any provider whose metadata root is a real directory.
             const folderMetaRoot = metaRootForArchive(archiveRootId, archiveRootPath, provider.type);
@@ -221,6 +236,8 @@ export class IndexingJob {
             };
 
             const file = await this.fileRepo.upsertByPath(archiveRootId, normalizedPath, baseFile);
+            this._filesProcessed++;
+            await this._reportProgress();
 
             // If no JSON existed yet, create a minimal one so other
             // tools can find this file by UUID right away.
@@ -270,6 +287,27 @@ export class IndexingJob {
    * Whitespace and a trailing carriage return on the candidate are
    * stripped before comparison so resource-fork-style filenames match.
    */
+  /**
+   * Report indexing progress to the background_jobs table.
+   * Throttled to once every 2 seconds to avoid spamming the DB.
+   * The progress value is a synthetic estimate since we don't know
+   * total files upfront — we use a logarithmic curve that
+   * approaches 0.95 asymptotically, then jumps to 1.0 on completion.
+   */
+  private async _reportProgress(): Promise<void> {
+    if (!this._jobId) return;
+    const now = Date.now();
+    if (now - this._lastProgressUpdate < 2000) return;
+    this._lastProgressUpdate = now;
+
+    const total = this._filesProcessed + this._foldersProcessed;
+    // Logarithmic progress: rises quickly at first, then slows.
+    // Approaches ~0.95 at 10,000 items processed.
+    const progress = Math.min(0.95, 1 - 1 / (1 + total / 100));
+
+    await this.jobManager.updateProgress(this._jobId, progress).catch(() => {});
+  }
+
   private shouldIgnore(name: string): boolean {
     const lower = name.replace(/\r$/, '').trim().toLowerCase();
     for (const rawPattern of this.ignorePatterns) {
