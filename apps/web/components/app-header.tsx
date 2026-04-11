@@ -4,8 +4,7 @@ import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/cn';
 import { useTheme } from '@/components/theme-provider';
 import { useAuth } from '@/lib/use-auth';
-import { useQuery } from '@tanstack/react-query';
-import { jobs } from '@/lib/api';
+import { IndexingStatus } from '@/components/indexing-status';
 import {
   PanelLeft,
   LayoutGrid,
@@ -30,27 +29,6 @@ export function AppHeader() {
   const { theme, setTheme } = useTheme();
   const { user, logout } = useAuth();
 
-  const { data: activeJobs } = useQuery({
-    queryKey: ['jobs', 'active'],
-    queryFn: async () => {
-      const all = await jobs.list();
-      return all.filter((j) => j.status === 'QUEUED' || j.status === 'RUNNING');
-    },
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      return data && data.length > 0 ? 5000 : 30000;
-    },
-  });
-
-  const { data: watcherStatus } = useQuery({
-    queryKey: ['watcher-status'],
-    queryFn: async () => {
-      const r = await fetch('/api/watcher');
-      return r.json() as Promise<{ watching: string[] }>;
-    },
-    refetchInterval: 60000,
-  });
-
   const gridColWidth = useAppStore((s) => s.gridColWidth);
   const setGridColWidth = useAppStore((s) => s.setGridColWidth);
 
@@ -61,15 +39,6 @@ export function AppHeader() {
   };
 
   const ThemeIcon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor;
-  const hasActiveJobs = (activeJobs?.length ?? 0) > 0;
-  const watchingCount = watcherStatus?.watching?.length ?? 0;
-
-  // Build a descriptive label for active jobs
-  const indexingLabel = hasActiveJobs
-    ? activeJobs!.length === 1
-      ? 'Indexing 1 archive...'
-      : `Indexing ${activeJobs!.length} archives...`
-    : '';
 
   return (
     <header className="flex h-12 items-center justify-between border-b border-border px-3" role="banner">
@@ -84,22 +53,7 @@ export function AppHeader() {
           </button>
         )}
 
-        {hasActiveJobs && (
-          <div className="flex items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-xs text-primary" title={indexingLabel}>
-            <Loader2 className="h-3 w-3 animate-spin" />
-            <span className="hidden sm:inline">{indexingLabel}</span>
-          </div>
-        )}
-
-        {watchingCount > 0 && !hasActiveJobs && (
-          <div
-            className="flex items-center gap-1.5 rounded-md bg-green-500/10 px-2 py-1 text-xs text-green-600 dark:text-green-400"
-            title={`Watching ${watchingCount} local archive(s) for changes`}
-          >
-            <Eye className="h-3 w-3" />
-            <span className="hidden sm:inline">Live</span>
-          </div>
-        )}
+        <IndexingStatus />
       </div>
 
       <div className="flex items-center gap-1">

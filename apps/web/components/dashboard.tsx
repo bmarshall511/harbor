@@ -56,9 +56,14 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof File }> = [
 ];
 
 export function Dashboard() {
-  const { data, isLoading } = useQuery<DashboardData>({
+  const { data, isLoading, error } = useQuery<DashboardData>({
     queryKey: ['dashboard'],
-    queryFn: async () => { const r = await fetch('/api/dashboard'); return r.json(); },
+    queryFn: async () => {
+      const r = await fetch('/api/dashboard');
+      if (!r.ok) throw new Error(`Dashboard API failed: ${r.status}`);
+      return r.json();
+    },
+    retry: 2,
   });
   const openDetailPanel = useAppStore((s) => s.openDetailPanel);
   const [tab, setTab] = useState<Tab>('recent-views');
@@ -69,6 +74,26 @@ export function Dashboard() {
     return (
       <div className="w-full p-6 space-y-6">
         {[1, 2, 3].map((i) => <div key={i} className="h-28 animate-pulse rounded-xl bg-muted" />)}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex w-full flex-col items-center justify-center p-12 text-center">
+        <div className="rounded-full bg-destructive/10 p-4">
+          <Archive className="h-8 w-8 text-destructive" />
+        </div>
+        <h2 className="mt-4 text-lg font-semibold">Failed to load dashboard</h2>
+        <p className="mt-2 max-w-md text-sm text-muted-foreground">
+          There was a problem connecting to the server. This may be a temporary issue — try refreshing.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          Refresh
+        </button>
       </div>
     );
   }
