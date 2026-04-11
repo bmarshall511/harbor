@@ -105,8 +105,10 @@ export class DropboxSyncService {
 
     while (hasMore) {
       try {
-        const client = provider.getClient();
-        const res = await client.filesListFolderContinue({ cursor });
+        const res = await provider.withRefresh(async () => {
+          const client = provider.getClient();
+          return client.filesListFolderContinue({ cursor });
+        });
         const entries = res.result.entries;
 
         for (const entry of entries) {
@@ -257,13 +259,15 @@ export class DropboxSyncService {
    */
   private async getLatestCursor(provider: DropboxProvider, rootPath: string): Promise<string | null> {
     try {
-      const client = provider.getClient();
-      const res = await client.filesListFolderGetLatestCursor({
-        path: provider.normalizeDropboxPath(rootPath),
-        recursive: true,
-        include_deleted: true,
+      return await provider.withRefresh(async () => {
+        const client = provider.getClient();
+        const res = await client.filesListFolderGetLatestCursor({
+          path: provider.normalizeDropboxPath(rootPath),
+          recursive: true,
+          include_deleted: true,
+        });
+        return res.result.cursor;
       });
-      return res.result.cursor;
     } catch (err) {
       console.error('[DropboxSync] Failed to get latest cursor:', err);
       return null;

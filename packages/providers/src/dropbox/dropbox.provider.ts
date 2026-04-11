@@ -237,7 +237,7 @@ export class DropboxProvider implements StorageProvider {
   }
 
   /** Execute a Dropbox API call with automatic token refresh on auth errors. */
-  private async withRefresh<T>(fn: () => Promise<T>): Promise<T> {
+  async withRefresh<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
     } catch (err: any) {
