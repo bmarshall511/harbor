@@ -1,15 +1,16 @@
 'use client';
 
 /**
- * Indexing status indicator — shows a progress bar in the app header
- * when any background job is running. Polls /api/jobs every 2 seconds
- * when active. Auto-hides when idle. Shows recently completed jobs
- * briefly before hiding.
+ * Indexing status indicator — shows real-time progress in the app
+ * header when indexing or other background jobs are running.
+ *
+ * Shows: job type, files/folders processed count, current file path,
+ * and a completion notification that auto-refreshes the file listing.
  */
 
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Loader2, X } from 'lucide-react';
+import { Check, Loader2, X, File, Folder } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 interface Job {
@@ -18,14 +19,22 @@ interface Job {
   status: string;
   progress: number | null;
   error: string | null;
-  metadata: Record<string, unknown> | null;
+  metadata: {
+    filesProcessed?: number;
+    foldersProcessed?: number;
+    currentPath?: string;
+    totalFiles?: number;
+    totalFolders?: number;
+    archiveRootId?: string;
+    [key: string]: unknown;
+  } | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
 }
 
 const JOB_LABELS: Record<string, string> = {
-  index: 'Indexing archive',
+  index: 'Indexing',
   preview: 'Generating previews',
   face_detect: 'Detecting faces',
   sync: 'Syncing Dropbox',
@@ -54,76 +63,85 @@ export function IndexingStatus() {
     (j) => j.status === 'RUNNING' || j.status === 'QUEUED',
   );
 
-  // Track when a job completes so we can show a brief "Done" message
+  // Track completion for auto-refresh
   useEffect(() => {
     if (!jobs) return;
     const justCompleted = jobs.find(
-      (j) => j.status === 'COMPLETED' && j.completedAt &&
+      (j) => (j.status === 'COMPLETED' || j.status === 'FAILED') && j.completedAt &&
         Date.now() - new Date(j.completedAt).getTime() < 10_000,
     );
     if (justCompleted && justCompleted.id !== recentlyCompleted?.id) {
       setRecentlyCompleted(justCompleted);
-      // Invalidate file/folder queries so the UI refreshes
       queryClient.invalidateQueries({ queryKey: ['files'] });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['archive-roots'] });
-      // Auto-hide after 5 seconds
-      const timer = setTimeout(() => setRecentlyCompleted(null), 5000);
+      const timer = setTimeout(() => setRecentlyCompleted(null), 8000);
       return () => clearTimeout(timer);
     }
   }, [jobs, recentlyCompleted, queryClient]);
 
-  // Show recently completed job
+  // Show completed notification
   if (!activeJobs.length && recentlyCompleted) {
     const label = JOB_LABELS[recentlyCompleted.type] ?? recentlyCompleted.type;
     const failed = recentlyCompleted.status === 'FAILED';
+    const meta = recentlyCompleted.metadata;
     return (
       <div className={cn(
-        'flex items-center gap-2 rounded-full border px-3 py-1',
+        'flex items-center gap-2 rounded-lg border px-3 py-1.5',
         failed ? 'border-destructive/40 bg-destructive/10' : 'border-green-500/40 bg-green-500/10',
       )}>
-        {failed ? (
-          <X className="h-3 w-3 text-destructive" />
-        ) : (
-          <Check className="h-3 w-3 text-green-600" />
-        )}
-        <span className={cn('text-[11px] font-medium', failed ? 'text-destructive' : 'text-green-700 dark:text-green-400')}>
-          {label} — {failed ? 'failed' : 'complete'}
-        </span>
+        {failed ? <X className="h-3.5 w-3.5 text-destructive" /> : <Check className="h-3.5 w-3.5 text-green-600" />}
+        <div className="flex flex-col">
+          <span className={cn('text-[11px] font-medium', failed ? 'text-destructive' : 'text-green-700 dark:text-green-400')}>
+            {label} {failed ? 'failed' : 'complete'}
+          </span>
+          {!failed && meta && (
+            <span className="text-[10px] text-green-600/70 dark:text-green-400/70">
+              {meta.totalFiles ?? meta.filesProcessed ?? 0} files, {meta.totalFolders ?? meta.foldersProcessed ?? 0} folders
+            </span>
+          )}
+          {failed && recentlyCompleted.error && (
+            <span className="max-w-[200px] truncate text-[10px] text-destructive/70">{recentlyCompleted.error}</span>
+          )}
+        </div>
       </div>
     );
   }
 
   if (activeJobs.length === 0) return null;
 
-  const primaryJob = activeJobs[0];
-  const label = JOB_LABELS[primaryJob.type] ?? primaryJob.type;
-  const progress = primaryJob.progress;
-  const hasProgress = progress !== null && progress > 0;
-  const pct = hasProgress ? Math.round(progress * 100) : 0;
+  const job = activeJobs[0];
+  const label = JOB_LABELS[job.type] ?? job.type;
+  const meta = job.metadata;
+  const filesCount = meta?.filesProcessed ?? 0;
+  const foldersCount = meta?.foldersProcessed ?? 0;
+  const currentPath = meta?.currentPath ?? '';
+  const currentFileName = currentPath ? currentPath.split('/').pop() : '';
 
   return (
-    <div className="flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3 py-1">
-      <Loader2 className="h-3 w-3 animate-spin text-primary" />
-      <span className="text-[11px] font-medium text-foreground">{label}</span>
-      {hasProgress ? (
-        <div className="flex items-center gap-1.5">
-          <div className="h-1.5 w-20 overflow-hidden rounded-full bg-primary/20">
-            <div
-              className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
-              style={{ width: `${pct}%` }}
-            />
+    <div className="flex items-center gap-2.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5">
+      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+      <div className="flex flex-col min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-medium text-foreground">{label}</span>
+          <div className="flex items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground">
+            <span className="flex items-center gap-0.5">
+              <File className="h-2.5 w-2.5" />{filesCount.toLocaleString()}
+            </span>
+            <span className="flex items-center gap-0.5">
+              <Folder className="h-2.5 w-2.5" />{foldersCount.toLocaleString()}
+            </span>
           </div>
-          <span className="text-[10px] tabular-nums text-primary/80">{pct}%</span>
         </div>
-      ) : (
-        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-primary/20">
-          <div className="h-full w-1/3 animate-[shimmer_1.2s_ease-in-out_infinite] rounded-full bg-primary" />
-        </div>
-      )}
+        {currentFileName && (
+          <span className="max-w-[250px] truncate text-[10px] text-muted-foreground">
+            {currentFileName}
+          </span>
+        )}
+      </div>
       {activeJobs.length > 1 && (
-        <span className="text-[10px] text-muted-foreground">+{activeJobs.length - 1} more</span>
+        <span className="text-[10px] text-muted-foreground">+{activeJobs.length - 1}</span>
       )}
     </div>
   );

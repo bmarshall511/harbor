@@ -36,10 +36,13 @@ export class JobManager {
     });
   }
 
-  async updateProgress(jobId: string, progress: number): Promise<void> {
+  async updateProgress(jobId: string, progress: number, metadata?: Record<string, unknown>): Promise<void> {
     await db.backgroundJob.update({
       where: { id: jobId },
-      data: { progress },
+      data: {
+        progress,
+        ...(metadata ? { metadata: metadata as any } : {}),
+      },
     });
   }
 

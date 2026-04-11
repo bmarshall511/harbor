@@ -21,6 +21,7 @@ export class IndexingJob {
   private _jobId: string | null = null;
   private _filesProcessed = 0;
   private _foldersProcessed = 0;
+  private _currentPath = '';
   private _lastProgressUpdate = 0;
 
   async indexArchiveRoot(archiveRootId: string, userId?: string, dropboxCredentials?: { appKey: string; appSecret: string }): Promise<void> {
@@ -75,8 +76,12 @@ export class IndexingJob {
       if (fileCount === 0 && folderCount === 0) {
         await this.jobManager.markFailed(jobId, `No files or folders found at path "${root.rootPath}". Check the path and provider connection.`);
       } else {
-        // Set progress to 1.0 and store final counts
-        await this.jobManager.updateProgress(jobId, 1.0);
+        await this.jobManager.updateProgress(jobId, 1.0, {
+          filesProcessed: this._filesProcessed,
+          foldersProcessed: this._foldersProcessed,
+          totalFiles: fileCount,
+          totalFolders: folderCount,
+        });
         await this.jobManager.markCompleted(jobId);
 
         // Auto-generate preview thumbnails for local archives
@@ -237,6 +242,7 @@ export class IndexingJob {
 
             const file = await this.fileRepo.upsertByPath(archiveRootId, normalizedPath, baseFile);
             this._filesProcessed++;
+            this._currentPath = normalizedPath;
             await this._reportProgress();
 
             // If no JSON existed yet, create a minimal one so other
@@ -290,9 +296,8 @@ export class IndexingJob {
   /**
    * Report indexing progress to the background_jobs table.
    * Throttled to once every 2 seconds to avoid spamming the DB.
-   * The progress value is a synthetic estimate since we don't know
-   * total files upfront — we use a logarithmic curve that
-   * approaches 0.95 asymptotically, then jumps to 1.0 on completion.
+   * Stores real counts and the current file path in the job
+   * metadata so the UI can show exactly what's happening.
    */
   private async _reportProgress(): Promise<void> {
     if (!this._jobId) return;
@@ -300,12 +305,11 @@ export class IndexingJob {
     if (now - this._lastProgressUpdate < 2000) return;
     this._lastProgressUpdate = now;
 
-    const total = this._filesProcessed + this._foldersProcessed;
-    // Logarithmic progress: rises quickly at first, then slows.
-    // Approaches ~0.95 at 10,000 items processed.
-    const progress = Math.min(0.95, 1 - 1 / (1 + total / 100));
-
-    await this.jobManager.updateProgress(this._jobId, progress).catch(() => {});
+    await this.jobManager.updateProgress(this._jobId, 0, {
+      filesProcessed: this._filesProcessed,
+      foldersProcessed: this._foldersProcessed,
+      currentPath: this._currentPath,
+    }).catch(() => {});
   }
 
   private shouldIgnore(name: string): boolean {
