@@ -42,7 +42,7 @@ export function useRealtime(): RealtimeStatus {
         // Anything that surfaces file lists should refetch.
         queryClient.invalidateQueries({ queryKey: ['dashboard'] });
         queryClient.invalidateQueries({ queryKey: ['recommendations'] });
-        queryClient.invalidateQueries({ queryKey: ['recently-viewed-resolved'] });
+        queryClient.invalidateQueries({ queryKey: ['recently-viewed'] });
         if (payload.fileId) {
           queryClient.invalidateQueries({ queryKey: ['file', payload.fileId] });
           queryClient.invalidateQueries({ queryKey: ['file-cache', payload.fileId] });
@@ -77,7 +77,7 @@ export function useRealtime(): RealtimeStatus {
         }
         queryClient.invalidateQueries({ queryKey: ['files'] });
         queryClient.invalidateQueries({ queryKey: ['recommendations'] });
-        queryClient.invalidateQueries({ queryKey: ['recently-viewed-resolved'] });
+        queryClient.invalidateQueries({ queryKey: ['recently-viewed'] });
         queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       }
 

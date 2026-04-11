@@ -73,22 +73,22 @@ function LoginContent() {
     }
   };
 
-  // Check auth mode (only after DB is initialized)
-  const { data: authMode } = useQuery({
-    queryKey: ['auth-mode'],
+  // Fetch public settings (no auth required)
+  const { data: publicSettings } = useQuery({
+    queryKey: ['public-settings'],
     queryFn: async () => {
       try {
-        const res = await fetch('/api/settings');
-        if (res.ok) {
-          const settings = await res.json();
-          return (settings['auth.mode'] ?? 'local') as string;
-        }
+        const res = await fetch('/api/settings/public');
+        if (res.ok) return res.json() as Promise<Record<string, string>>;
       } catch { /* fall through */ }
-      return 'multi';
+      return { 'auth.mode': 'local', 'registration.enabled': 'true' } as Record<string, string>;
     },
     staleTime: 60 * 1000,
     enabled: dbInitialized === true,
   });
+
+  const authMode = publicSettings?.['auth.mode'] ?? undefined;
+  const registrationEnabled = publicSettings?.['registration.enabled'] === 'true';
 
   // Check if first-admin setup is needed
   const { data: setupStatus } = useQuery({
@@ -101,27 +101,11 @@ function LoginContent() {
     enabled: authMode === 'multi',
   });
 
-  // Check if registration is enabled
-  const { data: registrationEnabled } = useQuery({
-    queryKey: ['registration-enabled'],
-    queryFn: async () => {
-      try {
-        const res = await fetch('/api/settings');
-        if (res.ok) {
-          const settings = await res.json();
-          return settings['registration.enabled'] === 'true';
-        }
-      } catch { /* settings unavailable */ }
-      return true; // Default to enabled
-    },
-    enabled: authMode === 'multi',
-  });
-
   const authModeResolved = authMode !== undefined;
   const isLocalMode = authMode === 'local';
   const isMultiMode = authMode === 'multi';
   const needsSetup = setupStatus?.needsSetup === true;
-  const canRegister = isMultiMode && !needsSetup && registrationEnabled === true;
+  const canRegister = isMultiMode && !needsSetup && registrationEnabled;
 
   // Auto-show setup mode when needed
   useEffect(() => {

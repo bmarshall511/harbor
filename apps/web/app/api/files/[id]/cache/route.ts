@@ -4,6 +4,7 @@ import { DropboxProvider } from '@harbor/providers';
 import { requireAuth } from '@/lib/auth';
 import { getSecret } from '@/lib/secrets';
 import { getSetting } from '@/lib/settings';
+import { isCloudMode } from '@/lib/deployment';
 import { emit } from '@/lib/events';
 import { toProviderPath } from '@/lib/provider-paths';
 // sharp loaded dynamically in generatePreviewFromCache
@@ -76,7 +77,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   } else {
     // Dropbox files are streamable when our offline cache has the
     // bytes OR when the Dropbox desktop sync surface has them.
-    if (cached) {
+    // In cloud mode the stream route proxies directly from Dropbox,
+    // so Dropbox files are always streamable without a local cache.
+    if (isCloudMode) {
+      streamable = true;
+    } else if (cached) {
       streamable = true;
     } else {
       const dbxAbsolute = root ? toProviderPath(file.path, { providerType: root.providerType, rootPath: root.rootPath }) : null;
@@ -103,57 +108,58 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
-  const file = await fileRepo.findById(id);
-  if (!file) return NextResponse.json({ message: 'Not found' }, { status: 404 });
 
-  const root = await rootRepo.findById(file.archiveRootId);
-  if (!root || root.providerType !== 'DROPBOX') {
-    return NextResponse.json({ message: 'Only Dropbox files can be cached offline' }, { status: 400 });
-  }
-
-  const cacheDir = await getSetting('preview.cacheDir');
-  const offlineDir = path.join(cacheDir, 'offline');
-  await fs.mkdir(offlineDir, { recursive: true });
-  const cachePath = path.join(offlineDir, id);
-
-  // Canonical `file.path` is root-relative. Dropbox needs the full
-  // absolute path (e.g. `/My Archive/Photos/foo.jpg`).
-  const dropboxPath = toProviderPath(file.path, { providerType: root.providerType, rootPath: root.rootPath });
-
-  // Strategy 1: Check if file exists locally via Dropbox desktop sync.
-  // The desktop sync folder mirrors the full Dropbox tree, so we need
-  // the rebuilt path here too.
-  const localPath = resolveDropboxLocalPath(dropboxPath.replace(/^\//, ''));
-  if (localPath) {
-    try {
-      const stat = await fs.stat(localPath);
-      if (stat.size > 0) {
-        const data = await fs.readFile(localPath);
-        await fs.writeFile(cachePath, data);
-
-        // Also generate preview from the cached file
-        await generatePreviewFromCache(id, file, cachePath, cacheDir);
-
-        // Notify listeners so the UI refreshes the file (its preview
-        // count changed) without requiring a manual refetch.
-        emit(
-          'file.updated',
-          { fileId: id, path: file.path, archiveRootId: file.archiveRootId },
-          { archiveRootId: file.archiveRootId, userId: auth.userId },
-        );
-        emit(
-          'preview.ready',
-          { fileId: id, size: 'LARGE', path: cachePath },
-          { archiveRootId: file.archiveRootId, userId: auth.userId },
-        );
-
-        return NextResponse.json({ cached: true, cacheSize: stat.size });
-      }
-    } catch { /* Not available locally, try Dropbox API */ }
-  }
-
-  // Strategy 2: Download via Dropbox API
   try {
+    const file = await fileRepo.findById(id);
+    if (!file) return NextResponse.json({ message: 'Not found' }, { status: 404 });
+
+    const root = await rootRepo.findById(file.archiveRootId);
+    if (!root || root.providerType !== 'DROPBOX') {
+      return NextResponse.json({ message: 'Only Dropbox files can be cached offline' }, { status: 400 });
+    }
+
+    const cacheDir = await getSetting('preview.cacheDir');
+    const offlineDir = path.join(cacheDir, 'offline');
+    await fs.mkdir(offlineDir, { recursive: true });
+    const cachePath = path.join(offlineDir, id);
+
+    // Canonical `file.path` is root-relative. Dropbox needs the full
+    // absolute path (e.g. `/My Archive/Photos/foo.jpg`).
+    const dropboxPath = toProviderPath(file.path, { providerType: root.providerType, rootPath: root.rootPath });
+
+    // Strategy 1: Check if file exists locally via Dropbox desktop sync.
+    // The desktop sync folder mirrors the full Dropbox tree, so we need
+    // the rebuilt path here too.
+    const localPath = resolveDropboxLocalPath(dropboxPath.replace(/^\//, ''));
+    if (localPath) {
+      try {
+        const stat = await fs.stat(localPath);
+        if (stat.size > 0) {
+          const data = await fs.readFile(localPath);
+          await fs.writeFile(cachePath, data);
+
+          // Also generate preview from the cached file
+          await generatePreviewFromCache(id, file, cachePath, cacheDir);
+
+          // Notify listeners so the UI refreshes the file (its preview
+          // count changed) without requiring a manual refetch.
+          emit(
+            'file.updated',
+            { fileId: id, path: file.path, archiveRootId: file.archiveRootId },
+            { archiveRootId: file.archiveRootId, userId: auth.userId },
+          );
+          emit(
+            'preview.ready',
+            { fileId: id, size: 'LARGE', path: cachePath },
+            { archiveRootId: file.archiveRootId, userId: auth.userId },
+          );
+
+          return NextResponse.json({ cached: true, cacheSize: stat.size });
+        }
+      } catch { /* Not available locally, try Dropbox API */ }
+    }
+
+    // Strategy 2: Download via Dropbox API
     const token = await db.providerToken.findFirst({
       where: { providerType: 'DROPBOX', userId: auth.userId },
       orderBy: { updatedAt: 'desc' },
@@ -208,6 +214,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     return NextResponse.json({ cached: true, cacheSize: data.length });
   } catch (err) {
+    console.error(`[Cache] Failed to cache file ${id}:`, err);
     const message = err instanceof Error ? err.message : 'Failed to cache file';
     return NextResponse.json({ message }, { status: 502 });
   }

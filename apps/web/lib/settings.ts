@@ -1,4 +1,5 @@
 import { SettingsRepository, SETTING_DEFAULTS } from '@harbor/database';
+import { isCloudMode } from '@/lib/deployment';
 
 const settingsRepo = new SettingsRepository();
 
@@ -13,20 +14,24 @@ const CACHE_TTL = 30_000; // 30 seconds
  * then to hardcoded defaults.
  */
 export async function getSetting(key: string): Promise<string> {
+  let value: string;
+
   // Try cache first
   if (_cache && Date.now() - _cacheTime < CACHE_TTL) {
-    return _cache[key] ?? SETTING_DEFAULTS[key] ?? '';
+    value = _cache[key] ?? SETTING_DEFAULTS[key] ?? '';
+  } else {
+    try {
+      _cache = await settingsRepo.getAll();
+      _cacheTime = Date.now();
+      value = _cache[key] ?? SETTING_DEFAULTS[key] ?? '';
+    } catch {
+      // Database not available (first run, migration pending, etc.)
+      // Fall back to env for bootstrap values
+      value = getEnvFallback(key);
+    }
   }
 
-  try {
-    _cache = await settingsRepo.getAll();
-    _cacheTime = Date.now();
-    return _cache[key] ?? SETTING_DEFAULTS[key] ?? '';
-  } catch {
-    // Database not available (first run, migration pending, etc.)
-    // Fall back to env for bootstrap values
-    return getEnvFallback(key);
-  }
+  return applyCloudOverrides(key, value);
 }
 
 export async function getSettingBool(key: string): Promise<boolean> {
@@ -53,5 +58,17 @@ function getEnvFallback(key: string): string {
     'log.level': process.env.LOG_LEVEL,
     // dropbox.redirectUri is always derived from the request origin — no env var needed
   };
+
   return envMap[key] ?? SETTING_DEFAULTS[key] ?? '';
+}
+
+/**
+ * On serverless (Vercel), the only writable directory is /tmp.
+ * Override the default preview cache path so fs.mkdir/writeFile work.
+ */
+function applyCloudOverrides(key: string, value: string): string {
+  if (key === 'preview.cacheDir' && isCloudMode && value === './data/preview-cache') {
+    return '/tmp/harbor-cache';
+  }
+  return value;
 }

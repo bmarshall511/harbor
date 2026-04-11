@@ -62,7 +62,7 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
       queryClient.invalidateQueries({ queryKey: ['file', file.id] });
       queryClient.invalidateQueries({ queryKey: ['files'] });
       queryClient.invalidateQueries({ queryKey: ['recommendations'] });
-      queryClient.invalidateQueries({ queryKey: ['recently-viewed-resolved'] });
+      queryClient.invalidateQueries({ queryKey: ['recently-viewed'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       setEditing(false);
       toast.success('Saved');
@@ -215,7 +215,7 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
         queryClient.invalidateQueries({ queryKey: ['file', file.id] });
         queryClient.invalidateQueries({ queryKey: ['files'] });
         queryClient.invalidateQueries({ queryKey: ['recommendations'] });
-        queryClient.invalidateQueries({ queryKey: ['recently-viewed-resolved'] });
+        queryClient.invalidateQueries({ queryKey: ['recently-viewed'] });
         queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       }, 1500);
     },
@@ -318,7 +318,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
         queryClient.invalidateQueries({ queryKey: ['people-suggestions', field.key] });
         queryClient.invalidateQueries({ queryKey: ['files'] });
         queryClient.invalidateQueries({ queryKey: ['recommendations'] });
-        queryClient.invalidateQueries({ queryKey: ['recently-viewed-resolved'] });
+        queryClient.invalidateQueries({ queryKey: ['recently-viewed'] });
         queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       }, 1500);
     },
