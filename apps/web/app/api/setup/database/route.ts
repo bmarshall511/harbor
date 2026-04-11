@@ -142,30 +142,39 @@ export async function POST() {
     return NextResponse.json({ message: 'Failed to create roles', steps }, { status: 500 });
   }
 
-  // Step 2: Create local user
-  try {
-    const ownerRole = await db.role.findFirst({ where: { systemRole: 'OWNER' } });
-    const localUser = await db.user.upsert({
-      where: { username: 'local' },
-      create: { username: 'local', displayName: 'Local User', isLocalUser: true, isActive: true },
-      update: {},
-    });
-    if (ownerRole) {
-      await db.userRoleAssignment.upsert({
-        where: { userId_roleId: { userId: localUser.id, roleId: ownerRole.id } },
-        create: { userId: localUser.id, roleId: ownerRole.id },
+  // Step 2: Create local user (only in local mode — cloud mode
+  // requires the user to create an admin account via the setup form)
+  const isCloud = process.env.HARBOR_DEPLOYMENT_MODE === 'cloud';
+  if (!isCloud) {
+    try {
+      const ownerRole = await db.role.findFirst({ where: { systemRole: 'OWNER' } });
+      const localUser = await db.user.upsert({
+        where: { username: 'local' },
+        create: { username: 'local', displayName: 'Local User', isLocalUser: true, isActive: true },
         update: {},
       });
+      if (ownerRole) {
+        await db.userRoleAssignment.upsert({
+          where: { userId_roleId: { userId: localUser.id, roleId: ownerRole.id } },
+          create: { userId: localUser.id, roleId: ownerRole.id },
+          update: {},
+        });
+      }
+      steps.push({ step: 'Local user', status: 'ok' });
+    } catch (err: unknown) {
+      steps.push({ step: 'Local user', status: 'error', message: err instanceof Error ? err.message : 'Failed' });
     }
-    steps.push({ step: 'Local user', status: 'ok' });
-  } catch (err: unknown) {
-    steps.push({ step: 'Local user', status: 'error', message: err instanceof Error ? err.message : 'Failed' });
+  } else {
+    steps.push({ step: 'Local user', status: 'ok', message: 'Skipped — cloud mode requires admin account creation' });
   }
 
   // Step 3: Seed system settings
+  // Cloud mode defaults to 'multi' (requires login/registration).
+  // Local mode defaults to 'local' (single-user, auto-login).
   try {
+    const authMode = isCloud ? 'multi' : 'local';
     const defaults: Record<string, string> = {
-      'auth.mode': 'local',
+      'auth.mode': authMode,
       'preview.cacheDir': './data/preview-cache',
       'ai.enabled': 'false',
       'ai.faceRecognition': 'false',

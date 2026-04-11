@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createSSEStream, eventBus } from '@harbor/realtime';
-import { fileWatcher } from '@harbor/jobs';
 import { requireAuth } from '@/lib/auth';
+import { isLocalMode } from '@/lib/deployment';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -13,23 +13,20 @@ export async function GET(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  // Auto-start file watchers on first SSE connection.
-  // This is the most reliable startup hook: the SSE connection opens
-  // as soon as the UI loads, so watchers begin immediately.
-  if (!watcherStarted) {
+  // Auto-start file watchers on first SSE connection — LOCAL MODE ONLY.
+  // On Vercel (cloud mode), there's no persistent filesystem to watch
+  // and each serverless invocation is isolated, so starting watchers
+  // would just waste resources and cause duplicate event noise.
+  if (isLocalMode && !watcherStarted) {
     watcherStarted = true;
-    fileWatcher.start().catch((err) => {
-      console.error('[SSE] Failed to auto-start file watcher:', err);
-      watcherStarted = false;
+    import('@harbor/jobs').then(({ fileWatcher }) => {
+      fileWatcher.start().catch((err) => {
+        console.error('[SSE] Failed to auto-start file watcher:', err);
+        watcherStarted = false;
+      });
     });
   }
 
-  // The SSE stream lives as long as the client keeps the connection
-  // open. We deliberately do NOT impose a server-side timeout: the
-  // 25s keepalive comments emitted by `createSSEStream` are enough
-  // to keep the socket healthy, and any disconnect (tab close,
-  // network blip, EventSource auto-reconnect) will run the `cancel`
-  // hook below to release the listener.
   let unsubscribe: (() => void) | null = null;
 
   const { readable, send, close } = createSSEStream(() => {
@@ -43,7 +40,6 @@ export async function GET(request: Request) {
     send(event);
   });
 
-  // Best-effort cleanup if the request itself is aborted server-side.
   request.signal.addEventListener('abort', () => {
     if (unsubscribe) {
       unsubscribe();
@@ -57,7 +53,6 @@ export async function GET(request: Request) {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-store',
       Connection: 'keep-alive',
-      // Disable Nginx-style buffering when proxied
       'X-Accel-Buffering': 'no',
     },
   });

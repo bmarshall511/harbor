@@ -65,10 +65,30 @@ export function Dashboard() {
 
   const viewedFiles = useRecentlyViewedFiles(18);
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return (
       <div className="w-full p-6 space-y-6">
         {[1, 2, 3].map((i) => <div key={i} className="h-28 animate-pulse rounded-xl bg-muted" />)}
+      </div>
+    );
+  }
+
+  if (!data || data.stats.totalArchives === 0) {
+    return (
+      <div className="flex w-full flex-col items-center justify-center p-12 text-center">
+        <div className="rounded-full bg-muted p-4">
+          <Archive className="h-8 w-8 text-muted-foreground" />
+        </div>
+        <h2 className="mt-4 text-lg font-semibold">Welcome to Harbor</h2>
+        <p className="mt-2 max-w-md text-sm text-muted-foreground">
+          Get started by adding an archive root in Settings. Connect a Dropbox account or point Harbor at a local directory to begin browsing your files.
+        </p>
+        <a
+          href="/settings?s=archive-roots"
+          className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          Add Archive Root
+        </a>
       </div>
     );
   }

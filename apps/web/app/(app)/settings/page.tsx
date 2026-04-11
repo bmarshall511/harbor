@@ -844,10 +844,16 @@ function ArchiveRootsSection() {
     queryKey: ['dropbox-status'],
     queryFn: async () => { const r = await fetch('/api/auth/dropbox/status'); return r.json(); },
   });
+  const { data: deploymentInfo } = useQuery({
+    queryKey: ['deployment-mode'],
+    queryFn: async () => { const r = await fetch('/api/deployment'); return r.json() as Promise<{ mode: string }>; },
+    staleTime: Infinity,
+  });
+  const deploymentMode = deploymentInfo?.mode;
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState('');
   const [newPath, setNewPath] = useState('');
-  const [newProvider, setNewProvider] = useState<'LOCAL_FILESYSTEM' | 'DROPBOX'>('LOCAL_FILESYSTEM');
+  const [newProvider, setNewProvider] = useState<'LOCAL_FILESYSTEM' | 'DROPBOX'>(deploymentMode === 'cloud' ? 'DROPBOX' : 'LOCAL_FILESYSTEM');
   const [showDropboxPicker, setShowDropboxPicker] = useState(false);
   const [showLocalPicker, setShowLocalPicker] = useState(false);
 
@@ -920,10 +926,11 @@ function ArchiveRootsSection() {
 
         {showAdd ? (
           <div className="rounded-lg border border-border p-4 space-y-3">
-            {/* Provider selection */}
+            {/* Provider selection — Local Folder hidden in cloud mode */}
             <div>
               <label className="mb-1.5 block text-sm font-medium">Provider</label>
               <div className="flex gap-2">
+                {deploymentMode !== 'cloud' && (
                 <button
                   onClick={() => { setNewProvider('LOCAL_FILESYSTEM'); setNewPath(''); }}
                   className={cn(
@@ -934,6 +941,7 @@ function ArchiveRootsSection() {
                   <HardDrive className="h-4 w-4" />
                   Local Folder
                 </button>
+                )}
                 <button
                   onClick={() => { setNewProvider('DROPBOX'); setNewPath(''); setShowDropboxPicker(true); }}
                   disabled={!dropboxConnected}
@@ -1786,12 +1794,39 @@ function DeleteQueueRow({
 }
 
 function DatabaseSection() {
+  const { data: dbInfo } = useQuery({
+    queryKey: ['db-info'],
+    queryFn: async () => {
+      // Extract host info from a test query to show connection details
+      try {
+        const res = await fetch('/api/settings');
+        return res.ok ? { connected: true } : { connected: false };
+      } catch {
+        return { connected: false };
+      }
+    },
+  });
+
+  const deploymentMode = typeof window !== 'undefined'
+    ? (document.cookie.includes('harbor-admin-session') ? 'cloud' : undefined)
+    : undefined;
+
   return (
     <section>
       <SectionHeader icon={Database} title="Database" description="Database connection and maintenance" />
-      <div className="mt-4 rounded-lg border border-border p-4">
-        <p className="text-sm text-muted-foreground">
-          Connected to PostgreSQL. Database connection is configured at the infrastructure level during deployment.
+      <div className="mt-4 rounded-lg border border-border p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className={cn(
+            'h-2 w-2 rounded-full',
+            dbInfo?.connected ? 'bg-green-500' : 'bg-red-500',
+          )} />
+          <p className="text-sm font-medium">
+            {dbInfo?.connected ? 'Connected' : 'Connection error'}
+          </p>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          PostgreSQL database connection is configured via the <code className="rounded bg-muted px-1">DATABASE_URL</code> environment variable.
+          {process.env.NEXT_PUBLIC_VERCEL_URL && ' Hosted on Supabase via Vercel.'}
         </p>
       </div>
     </section>
