@@ -563,9 +563,12 @@ function UserManagementSection() {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ userId: user.id }),
+                          credentials: 'same-origin',
                         });
                         if (!res.ok) throw new Error((await res.json()).message);
-                        window.location.href = '/';
+                        // Small delay to ensure Set-Cookie headers are processed
+                        await new Promise((r) => setTimeout(r, 200));
+                        window.location.replace('/');
                       } catch (err: unknown) {
                         toast.error(err instanceof Error ? err.message : 'Failed to impersonate');
                       }

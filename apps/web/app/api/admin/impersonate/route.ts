@@ -1,21 +1,11 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { db } from '@harbor/database';
 import { requireAuth, requirePermission } from '@/lib/auth';
 import { randomUUID } from 'node:crypto';
 
 /**
- * POST /api/admin/impersonate
- *
- * Allows an admin to "Login as" another user. Creates a new session
- * for the target user and sets it as the active session cookie.
- * The admin's original session is preserved in a separate cookie
- * so they can switch back.
- *
+ * POST /api/admin/impersonate — Login as another user.
  * Body: { userId: string }
- *
- * POST /api/admin/impersonate/stop — ends impersonation and restores
- * the admin's original session.
  */
 export async function POST(request: Request) {
   const auth = await requireAuth(request);
@@ -35,36 +25,33 @@ export async function POST(request: Request) {
     data: {
       userId: targetUser.id,
       token,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       userAgent: request.headers.get('user-agent') ?? null,
     },
   });
 
-  const cookieStore = await cookies();
+  // Get the admin's current session token from the cookie
+  const currentSession = request.headers.get('cookie')
+    ?.split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith('harbor-session='))
+    ?.split('=')[1];
 
-  // Save the admin's current session so we can restore it later
-  const currentSession = cookieStore.get('harbor-session')?.value;
-  if (currentSession) {
-    cookieStore.set('harbor-admin-session', currentSession, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 24 * 60 * 60,
-    });
-  }
+  const isSecure = process.env.NODE_ENV === 'production';
+  const cookieOpts = `; HttpOnly; Path=/; SameSite=Lax; Max-Age=86400${isSecure ? '; Secure' : ''}`;
 
-  // Set the impersonated session
-  cookieStore.set('harbor-session', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 24 * 60 * 60,
-  });
-
-  return NextResponse.json({
+  const response = NextResponse.json({
     ok: true,
     impersonating: { id: targetUser.id, username: targetUser.username, displayName: targetUser.displayName },
   });
+
+  // Save the admin's session as a backup cookie
+  if (currentSession) {
+    response.headers.append('Set-Cookie', `harbor-admin-session=${currentSession}${cookieOpts}`);
+  }
+
+  // Set the new impersonated session cookie
+  response.headers.append('Set-Cookie', `harbor-session=${token}${cookieOpts}`);
+
+  return response;
 }

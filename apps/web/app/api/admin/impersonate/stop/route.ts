@@ -1,30 +1,30 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 
 /**
- * POST /api/admin/impersonate/stop
- *
- * Ends admin impersonation and restores the admin's original session.
+ * POST /api/admin/impersonate/stop — End impersonation.
  */
-export async function POST() {
-  const cookieStore = await cookies();
+export async function POST(request: Request) {
+  // Read the backup admin session from the cookie
+  const adminSession = request.headers.get('cookie')
+    ?.split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith('harbor-admin-session='))
+    ?.split('=')[1];
 
-  const adminSession = cookieStore.get('harbor-admin-session')?.value;
   if (!adminSession) {
     return NextResponse.json({ message: 'No admin session to restore' }, { status: 400 });
   }
 
+  const isSecure = process.env.NODE_ENV === 'production';
+  const cookieOpts = `; HttpOnly; Path=/; SameSite=Lax; Max-Age=2592000${isSecure ? '; Secure' : ''}`;
+
+  const response = NextResponse.json({ ok: true, message: 'Impersonation ended.' });
+
   // Restore the admin's session
-  cookieStore.set('harbor-session', adminSession, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 30 * 24 * 60 * 60,
-  });
+  response.headers.append('Set-Cookie', `harbor-session=${adminSession}${cookieOpts}`);
 
   // Clear the backup cookie
-  cookieStore.delete('harbor-admin-session');
+  response.headers.append('Set-Cookie', `harbor-admin-session=; HttpOnly; Path=/; Max-Age=0`);
 
-  return NextResponse.json({ ok: true, message: 'Impersonation ended — you are back to your admin account.' });
+  return response;
 }
