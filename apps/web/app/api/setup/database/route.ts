@@ -196,7 +196,44 @@ export async function POST() {
     steps.push({ step: 'Settings', status: 'error', message: err instanceof Error ? err.message : 'Failed' });
   }
 
-  // Step 4: Search foundation SQL (triggers + indexes)
+  // Step 4: Seed default metadata field templates
+  try {
+    const fieldTemplates = [
+      { name: 'Title', key: 'title', fieldType: 'text', sortOrder: 1 },
+      { name: 'Description', key: 'description', fieldType: 'textarea', sortOrder: 2 },
+      { name: 'Tags', key: 'tags', fieldType: 'multiselect', sortOrder: 3 },
+      {
+        name: 'Adult Content', key: 'adult_content', fieldType: 'multiselect', sortOrder: 4,
+        options: [
+          { value: 'nudity', label: 'Nudity' },
+          { value: 'sexual_acts', label: 'Sexual Acts' },
+          { value: 'suggestive', label: 'Suggestive' },
+        ],
+        showInSearch: true, hiddenByDefault: true,
+      },
+      { name: 'People', key: 'people', fieldType: 'people', sortOrder: 5, showInSearch: true },
+    ];
+    for (const tmpl of fieldTemplates) {
+      await db.metadataFieldTemplate.upsert({
+        where: { key: tmpl.key },
+        create: {
+          name: tmpl.name,
+          key: tmpl.key,
+          fieldType: tmpl.fieldType,
+          sortOrder: tmpl.sortOrder,
+          options: (tmpl as { options?: unknown }).options ?? [],
+          showInSearch: (tmpl as { showInSearch?: boolean }).showInSearch ?? false,
+          hiddenByDefault: (tmpl as { hiddenByDefault?: boolean }).hiddenByDefault ?? false,
+        },
+        update: {},
+      });
+    }
+    steps.push({ step: 'Metadata fields', status: 'ok' });
+  } catch (err: unknown) {
+    steps.push({ step: 'Metadata fields', status: 'error', message: err instanceof Error ? err.message : 'Failed' });
+  }
+
+  // Step 5: Search foundation SQL (triggers + indexes)
   try {
     // Create the search vector trigger function
     await db.$executeRawUnsafe(`
