@@ -527,7 +527,6 @@ model PersonRelationship {
   sourcePerson Person @relation("relationship_source", fields: [sourcePersonId], references: [id], onDelete: Cascade)
   targetPerson Person @relation("relationship_target", fields: [targetPersonId], references: [id], onDelete: Cascade)
 
-  @@unique([sourcePersonId, targetPersonId, relationType])
   @@index([sourcePersonId])
   @@index([targetPersonId])
   @@map("person_relationships")
