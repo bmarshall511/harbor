@@ -356,6 +356,10 @@ export class IndexingJob {
         const normalizedPath = toRelativePath(entry.path, archiveRootPath);
         if (!normalizedPath) continue;
 
+        // Skip .harbor metadata files/folders (the recursive listing
+        // returns them but they're Harbor's internal metadata, not user content)
+        if (normalizedPath.includes('.harbor')) continue;
+
         try {
           if (entry.isDirectory) {
             await this.folderRepo.upsertByPath(archiveRootId, normalizedPath, {

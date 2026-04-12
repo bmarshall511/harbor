@@ -73,10 +73,17 @@ export class FileRepository {
         mimeType: data.mimeType,
         size: data.size,
         hash: data.hash,
-        folder: data.folder,
+        // Only set folder if provided; disconnect stale FKs otherwise.
+        // ensureFolderHierarchy re-links files after the full traversal.
+        folder: data.folder ?? { disconnect: true },
         fileModifiedAt: data.fileModifiedAt,
         status: 'INDEXED' as FileStatus,
         indexedAt: new Date(),
+        ...(data.meta !== undefined ? { meta: data.meta } : {}),
+        ...(data.title !== undefined ? { title: data.title } : {}),
+        ...(data.description !== undefined ? { description: data.description } : {}),
+        ...(data.rating !== undefined ? { rating: data.rating } : {}),
+        ...(data.harborItemId !== undefined ? { harborItemId: data.harborItemId } : {}),
       },
     });
   }
