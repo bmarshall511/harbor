@@ -317,10 +317,10 @@ function FileDetail({ fileId }: { fileId: string }) {
           return (
             <div className="border-t border-border/50 pt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
               {camera && <InfoItem label="Camera" value={camera as string} />}
-              {f.lensModel && <InfoItem label="Lens" value={f.lensModel as string} />}
+              {!!f.lensModel && <InfoItem label="Lens" value={String(f.lensModel)} />}
               {f.iso != null && <InfoItem label="ISO" value={String(f.iso)} />}
               {f.aperture != null && <InfoItem label="Aperture" value={`f/${f.aperture}`} />}
-              {f.shutterSpeed && <InfoItem label="Shutter" value={`${f.shutterSpeed}s`} />}
+              {!!f.shutterSpeed && <InfoItem label="Shutter" value={`${String(f.shutterSpeed)}s`} />}
               {f.focalLength != null && (
                 <InfoItem label="Focal" value={`${f.focalLength}mm${f.focalLength35mm ? ` (${f.focalLength35mm}mm)` : ''}`} />
               )}

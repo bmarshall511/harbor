@@ -117,13 +117,13 @@ export async function POST(request: Request) {
               aiMimeType = contentType;
             } else {
               try {
-                const sharp = (await import('sharp')).default;
+                const sharp = (await import('sharp' as string)).default as any;
                 aiBuffer = await sharp(rawBuf)
                   .resize(1600, undefined, { fit: 'inside', withoutEnlargement: true })
                   .webp({ quality: 85 })
                   .toBuffer();
                 aiMimeType = 'image/webp';
-                console.log(`[AI/SuggestTitle] Converted preview from ${contentType} to WebP (${aiBuffer.length} bytes)`);
+                console.log(`[AI/SuggestTitle] Converted preview from ${contentType} to WebP (${aiBuffer!.length} bytes)`);
               } catch (convertErr) {
                 console.error(`[AI/SuggestTitle] Sharp conversion failed:`, convertErr);
               }

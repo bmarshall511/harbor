@@ -164,7 +164,7 @@ export async function POST(
           const fsp = await import('node:fs/promises');
           const nodePath = await import('node:path');
           const os = await import('node:os');
-          const sharp = (await import('sharp')).default;
+          const sharp = (await import('sharp' as string)).default as any;
 
           console.log(`[ReindexFile] Downloading Dropbox file for preview generation...`);
           const fileBuffer = await provider.readFile(providerPath);

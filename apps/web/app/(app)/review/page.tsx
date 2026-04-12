@@ -195,6 +195,8 @@ export default function ReviewPage() {
         : [...s.filters, filter];
       return { ...s, filters: next, currentIndex: 0 };
     });
+    setHistory([]);
+    setHistoryIndex(-1);
   }, []);
 
   // Keyboard shortcuts
@@ -574,15 +576,15 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
             const camera = [f.cameraMake, f.cameraModel].filter(Boolean).join(' ');
             return camera ? <InfoItem label="Camera" value={camera as string} /> : null;
           })()}
-          {file.meta?.fields?.lensModel && <InfoItem label="Lens" value={file.meta.fields.lensModel as string} />}
+          {!!file.meta?.fields?.lensModel && <InfoItem label="Lens" value={String(file.meta.fields.lensModel)} />}
           {file.meta?.fields?.iso != null && <InfoItem label="ISO" value={String(file.meta.fields.iso)} />}
           {file.meta?.fields?.aperture != null && <InfoItem label="Aperture" value={`f/${file.meta.fields.aperture}`} />}
-          {file.meta?.fields?.shutterSpeed && <InfoItem label="Shutter" value={`${file.meta.fields.shutterSpeed}s`} />}
+          {!!file.meta?.fields?.shutterSpeed && <InfoItem label="Shutter" value={`${String(file.meta.fields.shutterSpeed)}s`} />}
           {file.meta?.fields?.focalLength != null && (
             <InfoItem label="Focal" value={`${file.meta.fields.focalLength}mm`} />
           )}
-          {file.meta?.fields?.dateTaken && (
-            <InfoItem label="Taken" value={new Date(file.meta.fields.dateTaken as string).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />
+          {!!file.meta?.fields?.dateTaken && (
+            <InfoItem label="Taken" value={new Date(String(file.meta.fields.dateTaken)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />
           )}
           {file.fileCreatedAt && (
             <InfoItem
