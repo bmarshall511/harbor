@@ -2120,11 +2120,20 @@ function AiSettingsSection() {
                     <option value="sensual">Sensual</option>
                     <option value="alluring">Alluring</option>
                     <option value="intimate">Intimate</option>
-                    <option value="bold-artistic">Bold Artistic</option>
-                    <option value="provocative">Provocative</option>
                     <option value="seductive">Seductive</option>
-                    <option value="risque">Risqué</option>
                     <option value="boudoir">Boudoir</option>
+                    <option value="risque">Risqué</option>
+                    <option value="provocative">Provocative</option>
+                  </optgroup>
+                  <optgroup label="Adult">
+                    <option value="naughty">Naughty</option>
+                    <option value="x-rated">X-Rated</option>
+                    <option value="explicit">Explicit</option>
+                    <option value="porn">Porn</option>
+                    <option value="erotica">Erotica</option>
+                    <option value="fetish">Fetish</option>
+                    <option value="dirty-talk">Dirty Talk</option>
+                    <option value="taboo">Taboo</option>
                   </optgroup>
                   <optgroup label="Mood">
                     <option value="dark">Dark</option>
