@@ -73,6 +73,7 @@ type SettingsSectionId =
   | 'dropbox'
   | 'ai'
   | 'delete-queue'
+  | 'job-log'
   | 'database'
   | 'about';
 
@@ -94,6 +95,7 @@ const SETTINGS_NAV: SettingsNavEntry[] = [
   { id: 'dropbox', label: 'Dropbox', icon: Cloud, group: 'data' },
   { id: 'ai', label: 'AI Features', icon: Cpu, group: 'data' },
   { id: 'delete-queue', label: 'Delete Queue', icon: Trash2, group: 'system' },
+  { id: 'job-log', label: 'Job Log', icon: FileText, group: 'system' },
   { id: 'database', label: 'Database', icon: Database, group: 'system' },
   { id: 'about', label: 'About', icon: Shield, group: 'system' },
 ];
@@ -239,6 +241,7 @@ function SettingsContent({ section }: { section: SettingsSectionId }) {
     case 'dropbox': return <DropboxSection />;
     case 'ai': return <AiSettingsSection />;
     case 'delete-queue': return <DeleteQueueSection />;
+    case 'job-log': return <JobLogSection />;
     case 'database': return <DatabaseSection />;
     case 'about': return <AboutSection />;
   }
@@ -1927,6 +1930,120 @@ function ArchiveAccessPanel({ archiveRootId, onClose }: { archiveRootId: string;
         </>
       )}
     </div>
+  );
+}
+
+function JobLogSection() {
+  const { data: jobs, isLoading } = useQuery({
+    queryKey: ['jobs-log'],
+    queryFn: async () => {
+      const res = await fetch('/api/jobs');
+      if (!res.ok) return [];
+      return res.json() as Promise<Array<{
+        id: string;
+        type: string;
+        status: string;
+        progress: number | null;
+        error: string | null;
+        metadata: Record<string, unknown> | null;
+        createdAt: string;
+        startedAt: string | null;
+        completedAt: string | null;
+      }>>;
+    },
+    refetchInterval: 10_000,
+  });
+
+  const statusColor: Record<string, string> = {
+    COMPLETED: 'text-green-600 bg-green-500/10',
+    FAILED: 'text-destructive bg-destructive/10',
+    RUNNING: 'text-blue-600 bg-blue-500/10',
+    QUEUED: 'text-muted-foreground bg-muted',
+  };
+
+  const typeLabel: Record<string, string> = {
+    index: 'Indexing',
+    preview: 'Previews',
+    face_detect: 'Face Detection',
+    sync: 'Dropbox Sync',
+  };
+
+  return (
+    <section>
+      <SectionHeader
+        icon={FileText}
+        title="Job Log"
+        description="Recent background jobs — indexing, previews, face detection, and sync. Check here for errors and diagnostics."
+      />
+
+      {isLoading ? (
+        <div className="mt-4 text-sm text-muted-foreground">Loading...</div>
+      ) : (
+        <div className="mt-4 space-y-2">
+          {(jobs ?? []).length === 0 ? (
+            <p className="rounded-lg border border-border px-4 py-6 text-center text-sm text-muted-foreground">
+              No jobs recorded yet.
+            </p>
+          ) : (jobs ?? []).map((job) => {
+            const meta = job.metadata;
+            const filesProcessed = (meta?.filesProcessed as number) ?? 0;
+            const foldersProcessed = (meta?.foldersProcessed as number) ?? 0;
+            const images = (meta?.images as number) ?? 0;
+            const videos = (meta?.videos as number) ?? 0;
+            const currentPath = (meta?.currentPath as string) ?? '';
+            const interruptReason = (meta?.interruptReason as string) ?? '';
+            const duration = job.startedAt && job.completedAt
+              ? Math.round((new Date(job.completedAt).getTime() - new Date(job.startedAt).getTime()) / 1000)
+              : job.startedAt
+                ? Math.round((Date.now() - new Date(job.startedAt).getTime()) / 1000)
+                : null;
+
+            return (
+              <div key={job.id} className="rounded-lg border border-border p-3 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', statusColor[job.status] ?? 'bg-muted text-muted-foreground')}>
+                    {job.status}
+                  </span>
+                  <span className="text-xs font-medium">{typeLabel[job.type] ?? job.type}</span>
+                  <span className="ml-auto text-[10px] text-muted-foreground">
+                    {new Date(job.createdAt).toLocaleString()}
+                  </span>
+                </div>
+
+                {/* Stats */}
+                {filesProcessed > 0 && (
+                  <div className="text-[11px] tabular-nums text-muted-foreground">
+                    {filesProcessed} files ({images > 0 ? `${images} img` : ''}{videos > 0 ? ` ${videos} vid` : ''}) · {foldersProcessed} folders
+                    {duration !== null && <> · {duration}s</>}
+                  </div>
+                )}
+
+                {/* Current/last path */}
+                {currentPath && (
+                  <div className="truncate text-[10px] text-muted-foreground/70" title={currentPath}>
+                    Last: {currentPath}
+                  </div>
+                )}
+
+                {/* Interrupt reason */}
+                {interruptReason && (
+                  <div className="text-[10px] text-amber-600">
+                    {interruptReason}
+                  </div>
+                )}
+
+                {/* Error */}
+                {job.error && (
+                  <div className="rounded-md bg-destructive/5 border border-destructive/20 px-2.5 py-1.5 text-[11px] text-destructive break-words">
+                    {job.error}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 

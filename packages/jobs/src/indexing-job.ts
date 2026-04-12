@@ -102,7 +102,18 @@ export class IndexingJob {
 
       // If cancelled or interrupted by deadline, stop here.
       if (this._cancelled) return;
-      if (this._interrupted) return;
+      if (this._interrupted) {
+        // Log what happened so the admin can see it in the job log
+        await this.jobManager.updateProgress(jobId, 0, {
+          filesProcessed: this._filesProcessed,
+          foldersProcessed: this._foldersProcessed,
+          images: this._imageCount,
+          videos: this._videoCount,
+          currentPath: this._currentPath,
+          interruptReason: this._deadline > 0 ? 'Vercel timeout — will auto-continue' : 'Watchdog: no activity for 2 minutes',
+        }).catch(() => {});
+        return;
+      }
 
       // Ensure folder hierarchy exists for all indexed files.
       // Some providers (Dropbox) may not return explicit folder entries,
@@ -150,7 +161,15 @@ export class IndexingJob {
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Indexing failed';
-      await this.jobManager.markFailed(jobId, message);
+      const detail = [
+        message,
+        `Files processed: ${this._filesProcessed}`,
+        `Folders processed: ${this._foldersProcessed}`,
+        `Last path: ${this._currentPath || '(none)'}`,
+        error instanceof Error && error.stack ? `Stack: ${error.stack.split('\n').slice(0, 3).join(' → ')}` : '',
+      ].filter(Boolean).join(' | ');
+      console.error(`[IndexingJob] Failed: ${detail}`);
+      await this.jobManager.markFailed(jobId, detail);
       throw error;
     }
   }
