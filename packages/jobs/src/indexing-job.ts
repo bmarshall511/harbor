@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { db, FileRepository, FolderRepository, ArchiveRootRepository, SettingsRepository } from '@harbor/database';
 import { LocalFilesystemProvider, DropboxProvider, ArchiveMetadataService } from '@harbor/providers';
 import { guessMimeType } from '@harbor/utils';
@@ -93,12 +94,17 @@ export class IndexingJob {
       // Mark the start time so we can clean up stale entries after indexing
       const indexStartTime = new Date();
 
-      // Local filesystem: start from '' (paths are relative to root).
-      // Dropbox: start from rootPath (API expects Dropbox-absolute paths).
-      const startPath = root.providerType === 'LOCAL_FILESYSTEM'
-        ? ''
-        : (root.rootPath === '/' ? '' : root.rootPath);
-      await this.indexDirectory(provider, root.id, root.rootPath, startPath, null, 0);
+      if (root.providerType === 'DROPBOX' && 'listAllRecursive' in provider) {
+        // Dropbox: use recursive listing (single API call, returns ALL
+        // files/folders flat). Much faster than directory-by-directory
+        // traversal, and handles large archives without re-traversal.
+        const dbxProvider = provider as import('@harbor/providers').DropboxProvider;
+        const startPath = root.rootPath === '/' ? '' : root.rootPath;
+        await this.indexFlatList(dbxProvider, root.id, root.rootPath, startPath);
+      } else {
+        // Local filesystem: recursive directory walk
+        await this.indexDirectory(provider, root.id, root.rootPath, '', null, 0);
+      }
 
       // If cancelled or interrupted by deadline, stop here.
       if (this._cancelled) return;
@@ -178,6 +184,78 @@ export class IndexingJob {
     }
   }
 
+  /**
+   * Re-index a single file: re-stat from disk/provider, re-read its
+   * metadata JSON, update the DB row, and regenerate previews.
+   */
+  async reindexFile(fileId: string, userId?: string, dropboxCredentials?: { appKey: string; appSecret: string }): Promise<void> {
+    const file = await db.file.findUnique({
+      where: { id: fileId },
+      include: { archiveRoot: true },
+    });
+    if (!file) throw new Error(`File ${fileId} not found`);
+
+    const root = file.archiveRoot;
+    const provider = await this.createProvider(root, userId, dropboxCredentials);
+
+    // The local provider resolves paths relative to its root internally,
+    // so pass the DB-stored relative path. Dropbox expects a leading slash.
+    const providerPath = root.providerType === 'DROPBOX'
+      ? `/${file.path}`
+      : file.path;
+
+    // Re-stat the file from the provider
+    const metadata = await provider.getMetadata(providerPath);
+    const mimeType = guessMimeType(file.name) ?? metadata.mimeType;
+
+    // Compute hash if provider supports it
+    let hash: string | null = metadata.hash;
+    if (!hash && provider.computeHash) {
+      try {
+        hash = await provider.computeHash(providerPath);
+      } catch { /* non-fatal */ }
+    }
+
+    // Re-read the Harbor metadata JSON
+    const itemMetaRoot = metaRootForArchive(root.id, root.rootPath, provider.type);
+    const itemId = file.harborItemId;
+    const itemPayload = await this.archiveMeta.readItemByUuid(itemMetaRoot, itemId);
+
+    // Update the DB row
+    await db.file.update({
+      where: { id: fileId },
+      data: {
+        mimeType,
+        size: metadata.size,
+        hash,
+        fileCreatedAt: metadata.createdAt,
+        fileModifiedAt: metadata.modifiedAt,
+        status: 'INDEXED',
+        indexedAt: new Date(),
+        ...(itemPayload ? fileUpdatePayloadFromJson(itemPayload) : {}),
+      },
+    });
+
+    // Sync tags
+    if (itemPayload) {
+      await syncTagsForFile(fileId, itemPayload);
+    }
+
+    // Regenerate previews
+    if (mimeType && (mimeType.startsWith('image/') || mimeType.startsWith('video/'))) {
+      const settingsRepo = new SettingsRepository();
+      const cacheDir = await settingsRepo.get('preview.cacheDir', './data/preview-cache');
+      const previewJob = new PreviewJob(cacheDir);
+      // Delete existing previews so they get regenerated fresh
+      await db.preview.deleteMany({ where: { fileId } });
+      await previewJob.generatePreviews(fileId).catch((err) => {
+        console.error(`[ReindexFile] Preview generation failed for ${fileId}:`, err);
+      });
+    }
+
+    console.log(`[ReindexFile] Successfully reindexed file ${fileId} (${file.name})`);
+  }
+
   private async createProvider(root: { id: string; name: string; providerType: string; rootPath: string }, userId?: string, dropboxCredentials?: { appKey: string; appSecret: string }): Promise<StorageProvider> {
     if (root.providerType === 'LOCAL_FILESYSTEM') {
       return new LocalFilesystemProvider(root.id, root.name, root.rootPath);
@@ -223,6 +301,100 @@ export class IndexingJob {
     }
 
     throw new Error(`Unsupported provider type: ${root.providerType}`);
+  }
+
+  /**
+   * Index a Dropbox archive using a flat recursive listing.
+   * All files and folders come back in one API call (with pagination).
+   * Folders are created on-the-fly as files reference them.
+   */
+  private async indexFlatList(
+    provider: import('@harbor/providers').DropboxProvider,
+    archiveRootId: string,
+    archiveRootPath: string,
+    startPath: string,
+  ): Promise<void> {
+    try {
+      for await (const entry of provider.listAllRecursive(startPath)) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        if (this._cancelled) return;
+        if (this._deadline > 0 && Date.now() >= this._deadline) {
+          this._interrupted = true;
+          return;
+        }
+        if (Date.now() - this._lastActivityTime > this._stuckThresholdMs) {
+          console.error(`[IndexingJob] Watchdog: no activity for ${this._stuckThresholdMs / 1000}s — aborting`);
+          this._interrupted = true;
+          return;
+        }
+
+        if (this.shouldIgnore(entry.name)) continue;
+
+        const normalizedPath = toRelativePath(entry.path, archiveRootPath);
+        if (!normalizedPath) continue;
+
+        try {
+          if (entry.isDirectory) {
+            await this.folderRepo.upsertByPath(archiveRootId, normalizedPath, {
+              archiveRoot: { connect: { id: archiveRootId } },
+              name: entry.name,
+              path: normalizedPath,
+              depth: normalizedPath.split('/').length - 1,
+            });
+            this._foldersProcessed++;
+            this._lastActivityTime = Date.now();
+          } else {
+            const mimeType = guessMimeType(entry.name) ?? entry.mimeType;
+            const hash = entry.hash ?? null;
+
+            const itemMetaRoot = metaRootForArchive(archiveRootId, archiveRootPath, provider.type);
+            const itemId = await this.archiveMeta.getOrCreateItemId(itemMetaRoot, normalizedPath);
+            const existingItem = await this.archiveMeta.readItemByUuid(itemMetaRoot, itemId);
+
+            const baseFile = {
+              archiveRoot: { connect: { id: archiveRootId } },
+              name: entry.name,
+              path: normalizedPath,
+              mimeType,
+              size: entry.size,
+              hash,
+              fileCreatedAt: entry.createdAt,
+              fileModifiedAt: entry.modifiedAt,
+              status: 'INDEXED' as const,
+              indexedAt: new Date(),
+              harborItemId: itemId,
+              ...(existingItem ? fileUpdatePayloadFromJson(existingItem) : {}),
+            };
+
+            const file = await this.fileRepo.upsertByPath(archiveRootId, normalizedPath, baseFile);
+            this._filesProcessed++;
+            this._lastActivityTime = Date.now();
+            if (mimeType?.startsWith('image/')) this._imageCount++;
+            else if (mimeType?.startsWith('video/')) this._videoCount++;
+            else if (mimeType?.startsWith('audio/')) this._audioCount++;
+            else if (mimeType?.startsWith('text/') || mimeType === 'application/pdf') this._documentCount++;
+            else this._otherCount++;
+            this._currentPath = normalizedPath;
+            await this._reportProgress();
+
+            if (!existingItem) {
+              await this.archiveMeta.updateItem(itemMetaRoot, normalizedPath, {
+                name: entry.name, hash: hash ?? undefined,
+                createdAt: entry.createdAt, modifiedAt: entry.modifiedAt,
+              }, {});
+            }
+            if (existingItem) {
+              await syncTagsForFile(file.id, existingItem);
+            }
+          }
+        } catch (entryError) {
+          console.error(`Failed to index ${entry.path}:`, entryError);
+        }
+      }
+    } catch (dirError) {
+      throw dirError;
+    }
   }
 
   private async indexDirectory(

@@ -112,6 +112,82 @@ export class DropboxProvider implements StorageProvider {
     return p.startsWith('/') ? p : `/${p}`;
   }
 
+  /**
+   * List ALL files and folders recursively from a directory in a single
+   * Dropbox API call. Much faster than directory-by-directory traversal
+   * for large archives, and avoids re-traversal on restart.
+   */
+  async *listAllRecursive(dirPath: string): AsyncGenerator<FileEntry> {
+    const dbxPath = this.normalizeDropboxPath(dirPath);
+
+    let result;
+    try {
+      result = await this.getClient().filesListFolder({ path: dbxPath, recursive: true });
+    } catch (firstErr: any) {
+      const firstSummary = this.extractErrorSummary(firstErr);
+      if ((firstSummary.includes('expired_access_token') || firstSummary.includes('invalid_access_token')) && this.config.refreshToken) {
+        await this.refreshAccessToken();
+        result = await this.getClient().filesListFolder({ path: dbxPath, recursive: true });
+      } else {
+        throw this.makeDropboxError(firstSummary, dbxPath);
+      }
+    }
+
+    let hasMore = result!.result.has_more;
+    let cursor = result!.result.cursor;
+    for (const entry of result!.result.entries) {
+      // Use the full Dropbox path from the entry itself (not constructed from parentPath)
+      yield this.mapEntryWithFullPath(entry);
+    }
+    while (hasMore) {
+      try {
+        const cont = await this.getClient().filesListFolderContinue({ cursor });
+        hasMore = cont.result.has_more;
+        cursor = cont.result.cursor;
+        for (const entry of cont.result.entries) {
+          yield this.mapEntryWithFullPath(entry);
+        }
+      } catch (err: any) {
+        const summary = this.extractErrorSummary(err);
+        if ((summary.includes('expired_access_token') || summary.includes('invalid_access_token')) && this.config.refreshToken) {
+          await this.refreshAccessToken();
+          const cont = await this.getClient().filesListFolderContinue({ cursor });
+          hasMore = cont.result.has_more;
+          cursor = cont.result.cursor;
+          for (const entry of cont.result.entries) {
+            yield this.mapEntryWithFullPath(entry);
+          }
+        } else if (err?.status === 429 || summary.includes('too_many_requests')) {
+          console.warn('[Dropbox] Rate limited, waiting 30s...');
+          await new Promise((r) => setTimeout(r, 30_000));
+          const cont = await this.getClient().filesListFolderContinue({ cursor });
+          hasMore = cont.result.has_more;
+          cursor = cont.result.cursor;
+          for (const entry of cont.result.entries) {
+            yield this.mapEntryWithFullPath(entry);
+          }
+        } else {
+          console.error('[Dropbox] Recursive listing pagination failed:', summary);
+          break;
+        }
+      }
+    }
+  }
+
+  private mapEntryWithFullPath(entry: any): FileEntry {
+    const isDir = entry['.tag'] === 'folder';
+    return {
+      name: entry.name,
+      path: entry.path_display ?? entry.path_lower ?? entry.name,
+      isDirectory: isDir,
+      size: isDir ? 0 : (entry.size ?? 0),
+      mimeType: null,
+      createdAt: null,
+      modifiedAt: entry.client_modified ? new Date(entry.client_modified) : null,
+      hash: isDir ? undefined : (entry.content_hash ?? undefined),
+    };
+  }
+
   async *listDirectory(dirPath: string): AsyncGenerator<FileEntry> {
     const dbxPath = this.normalizeDropboxPath(dirPath);
 
