@@ -72,7 +72,7 @@ export function IndexingStatus() {
       const active = query.state.data?.filter(
         (j) => j.status === 'RUNNING' || j.status === 'QUEUED',
       );
-      return active && active.length > 0 ? 2000 : 30000;
+      return active && active.length > 0 ? 5000 : 30000;
     },
   });
 

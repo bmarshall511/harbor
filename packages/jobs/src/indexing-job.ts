@@ -209,6 +209,9 @@ export class IndexingJob {
   ): Promise<void> {
     try {
       for await (const entry of provider.listDirectory(dirPath)) {
+        // Yield to the event loop so HTTP requests aren't starved
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
         // Abort early if cancelled or deadline reached
         if (this._cancelled) return;
         if (this._deadline > 0 && Date.now() >= this._deadline) {
@@ -359,7 +362,7 @@ export class IndexingJob {
   private async _reportProgress(): Promise<void> {
     if (!this._jobId) return;
     const now = Date.now();
-    if (now - this._lastProgressUpdate < 2000) return;
+    if (now - this._lastProgressUpdate < 5000) return;
     this._lastProgressUpdate = now;
 
     // Check if the job was cancelled by the user
