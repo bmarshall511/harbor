@@ -135,19 +135,44 @@ export class DropboxProvider implements StorageProvider {
       }
     }
 
-    // The rest of the original listDirectory continues here with `result`
-    // But we need to restructure since the old code was inline after the try/catch
-    // Let me yield results from here
     let hasMore = result!.result.has_more;
+    let cursor = result!.result.cursor;
     for (const entry of result!.result.entries) {
       yield this.mapEntry(entry, dirPath);
     }
     while (hasMore) {
-      const cont = await this.getClient().filesListFolderContinue({ cursor: result!.result.cursor });
-      hasMore = cont.result.has_more;
-      result = cont;
-      for (const entry of cont.result.entries) {
-        yield this.mapEntry(entry, dirPath);
+      try {
+        const cont = await this.getClient().filesListFolderContinue({ cursor });
+        hasMore = cont.result.has_more;
+        cursor = cont.result.cursor;
+        for (const entry of cont.result.entries) {
+          yield this.mapEntry(entry, dirPath);
+        }
+      } catch (err: any) {
+        const summary = this.extractErrorSummary(err);
+        // Retry once on expired token
+        if ((summary.includes('expired_access_token') || summary.includes('invalid_access_token')) && this.config.refreshToken) {
+          await this.refreshAccessToken();
+          const cont = await this.getClient().filesListFolderContinue({ cursor });
+          hasMore = cont.result.has_more;
+          cursor = cont.result.cursor;
+          for (const entry of cont.result.entries) {
+            yield this.mapEntry(entry, dirPath);
+          }
+        } else if (err?.status === 429 || summary.includes('too_many_requests')) {
+          // Rate limited — wait and retry
+          console.warn('[Dropbox] Rate limited during listDirectory pagination, waiting 30s...');
+          await new Promise((r) => setTimeout(r, 30_000));
+          const cont = await this.getClient().filesListFolderContinue({ cursor });
+          hasMore = cont.result.has_more;
+          cursor = cont.result.cursor;
+          for (const entry of cont.result.entries) {
+            yield this.mapEntry(entry, dirPath);
+          }
+        } else {
+          console.error('[Dropbox] listDirectory pagination failed:', summary);
+          break; // Stop paginating this directory but don't crash the whole indexer
+        }
       }
     }
   }

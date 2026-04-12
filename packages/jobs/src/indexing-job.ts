@@ -31,6 +31,8 @@ export class IndexingJob {
   private _cancelled = false;
   private _deadline = 0; // 0 = no deadline
   private _interrupted = false;
+  private _lastActivityTime = 0; // Watchdog: last time a file/folder was processed
+  private _stuckThresholdMs = 120_000; // 2 minutes without progress = stuck
 
   /** Set a deadline (epoch ms) after which the job will pause for resumption. */
   setDeadline(deadlineMs: number): void {
@@ -71,6 +73,7 @@ export class IndexingJob {
       this._otherCount = 0;
       this._cancelled = false;
       this._interrupted = false;
+      this._lastActivityTime = Date.now();
       this._lastProgressUpdate = Date.now();
       await this.jobManager.markRunning(jobId);
 
@@ -219,6 +222,14 @@ export class IndexingJob {
           return;
         }
 
+        // Watchdog: if no file/folder has been processed in 2 minutes,
+        // the indexer is likely stuck (e.g. Dropbox API hanging). Abort.
+        if (Date.now() - this._lastActivityTime > this._stuckThresholdMs) {
+          console.error(`[IndexingJob] Watchdog: no activity for ${this._stuckThresholdMs / 1000}s — aborting`);
+          this._interrupted = true;
+          return;
+        }
+
         // Skip entries matching global ignore patterns
         if (this.shouldIgnore(entry.name)) continue;
 
@@ -242,6 +253,7 @@ export class IndexingJob {
             });
 
             this._foldersProcessed++;
+            this._lastActivityTime = Date.now();
 
             // Sync folder metadata from .harbor/folders/{path}/meta.json
             // for any provider whose metadata root is a real directory.
@@ -297,6 +309,7 @@ export class IndexingJob {
 
             const file = await this.fileRepo.upsertByPath(archiveRootId, normalizedPath, baseFile);
             this._filesProcessed++;
+            this._lastActivityTime = Date.now();
             if (mimeType?.startsWith('image/')) this._imageCount++;
             else if (mimeType?.startsWith('video/')) this._videoCount++;
             else if (mimeType?.startsWith('audio/')) this._audioCount++;
