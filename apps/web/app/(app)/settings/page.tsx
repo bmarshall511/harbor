@@ -3804,6 +3804,17 @@ function PersonRelationshipsSection() {
           targetPersonId: string; targetName: string;
           relationType: string; expectedInverse: string;
         }>;
+        missingGroupMembers: Array<{
+          personId: string; personName: string;
+          groupId: string; groupName: string; groupColor: string | null;
+          reason: string;
+        }>;
+        suggestedNewGroups: Array<{
+          suggestedName: string;
+          memberIds: string[];
+          memberNames: string[];
+          reason: string;
+        }>;
         totalIssues: number;
       }>;
     },
@@ -3851,6 +3862,51 @@ function PersonRelationshipsSection() {
       queryClient.invalidateQueries({ queryKey: ['relationship-suggestions'] });
       queryClient.invalidateQueries({ queryKey: ['connections'] });
       toast.success(`Created ${data?.created ?? 0} missing relationships`);
+    },
+  });
+
+  const addToGroup = useMutation({
+    mutationFn: async ({ groupId, personId }: { groupId: string; personId: string }) => {
+      const res = await fetch(`/api/person-groups/${groupId}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personId }),
+      });
+      if (!res.ok) throw new Error('Failed');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-groups'] });
+      queryClient.invalidateQueries({ queryKey: ['relationship-suggestions'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      toast.success('Added to group');
+    },
+  });
+
+  const createGroupWithMembers = useMutation({
+    mutationFn: async ({ name, memberIds }: { name: string; memberIds: string[] }) => {
+      // Create the group
+      const res = await fetch('/api/person-groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error('Failed to create group');
+      const group = await res.json() as { id: string };
+      // Add all members
+      for (const personId of memberIds) {
+        await fetch(`/api/person-groups/${group.id}/members`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ personId }),
+        }).catch(() => {}); // Skip duplicates
+      }
+      return { groupId: group.id, memberCount: memberIds.length };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['person-groups'] });
+      queryClient.invalidateQueries({ queryKey: ['relationship-suggestions'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      toast.success(`Created group with ${data.memberCount} members`);
     },
   });
 
@@ -3958,6 +4014,71 @@ function PersonRelationshipsSection() {
                         >
                           Fix
                         </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Missing group memberships */}
+              {suggestionsData.missingGroupMembers.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
+                    Missing Group Members ({suggestionsData.missingGroupMembers.length})
+                  </p>
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {suggestionsData.missingGroupMembers.map((m, i) => (
+                      <div key={i} className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs">
+                        <span className="font-medium truncate">{m.personName}</span>
+                        <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground/40" />
+                        {m.groupColor && (
+                          <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: m.groupColor }} />
+                        )}
+                        <span className="truncate">{m.groupName}</span>
+                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground truncate max-w-[150px]">{m.reason}</span>
+                        <button
+                          onClick={() => addToGroup.mutate({ groupId: m.groupId, personId: m.personId })}
+                          disabled={addToGroup.isPending}
+                          className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Suggested new groups */}
+              {suggestionsData.suggestedNewGroups.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
+                    Suggested New Groups ({suggestionsData.suggestedNewGroups.length})
+                  </p>
+                  <div className="space-y-1.5">
+                    {suggestionsData.suggestedNewGroups.map((g, i) => (
+                      <div key={i} className="rounded-md border border-border bg-card px-3 py-2">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-xs font-medium">{g.suggestedName}</span>
+                            <span className="ml-2 text-[10px] text-muted-foreground">{g.memberNames.length} members</span>
+                          </div>
+                          <button
+                            onClick={() => createGroupWithMembers.mutate({ name: g.suggestedName, memberIds: g.memberIds })}
+                            disabled={createGroupWithMembers.isPending}
+                            className="shrink-0 rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
+                          >
+                            {createGroupWithMembers.isPending ? 'Creating...' : 'Create'}
+                          </button>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {g.memberNames.map((name, j) => (
+                            <span key={j} className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="mt-1 text-[10px] text-muted-foreground">{g.reason}</p>
                       </div>
                     ))}
                   </div>

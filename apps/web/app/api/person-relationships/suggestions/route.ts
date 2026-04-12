@@ -220,10 +220,145 @@ export async function GET(request: Request) {
     }
   }
 
+  // ── Rule 7: Missing group memberships ──────────────────────────
+  // If a person is related (parent/child/sibling/spouse) to someone in
+  // a group, they probably belong in that group too.
+  const allGroupsWithMembers = await db.personGroup.findMany({
+    include: { members: { select: { personId: true } } },
+  });
+
+  type MissingGroupMembership = {
+    personId: string;
+    personName: string;
+    groupId: string;
+    groupName: string;
+    groupColor: string | null;
+    reason: string;
+  };
+
+  const missingGroupMembers: MissingGroupMembership[] = [];
+  const seenGroupSuggestions = new Set<string>();
+  const FAMILY_TYPES = new Set(['parent', 'child', 'sibling', 'spouse', 'partner', 'grandparent', 'grandchild']);
+
+  for (const group of allGroupsWithMembers) {
+    const memberIds = new Set(group.members.map((m) => m.personId));
+
+    // For each member, find people related by family types who aren't in the group
+    for (const memberId of memberIds) {
+      const rels = allRels.filter(
+        (r) => r.sourcePersonId === memberId && FAMILY_TYPES.has(r.relationType),
+      );
+      for (const rel of rels) {
+        if (memberIds.has(rel.targetPersonId)) continue; // Already in group
+        const key = `${rel.targetPersonId}:${group.id}`;
+        if (seenGroupSuggestions.has(key)) continue;
+        seenGroupSuggestions.add(key);
+
+        const memberName = nameMap.get(memberId) ?? 'Unknown';
+        const targetName = nameMap.get(rel.targetPersonId) ?? 'Unknown';
+        missingGroupMembers.push({
+          personId: rel.targetPersonId,
+          personName: targetName,
+          groupId: group.id,
+          groupName: group.name,
+          groupColor: group.color,
+          reason: `${rel.relationType} of ${memberName} (in ${group.name})`,
+        });
+      }
+    }
+  }
+
+  // ── Rule 8: Suggest new family groups ─────────────────────────
+  // Find clusters of people connected by parent/child/spouse who
+  // don't share any group. Identify by last name if available.
+  type SuggestedGroup = {
+    suggestedName: string;
+    memberIds: string[];
+    memberNames: string[];
+    reason: string;
+  };
+
+  const suggestedNewGroups: SuggestedGroup[] = [];
+
+  // Build family clusters using union-find on family relationships
+  const familyParent = new Map<string, string>();
+  function find(x: string): string {
+    if (!familyParent.has(x)) familyParent.set(x, x);
+    if (familyParent.get(x) !== x) familyParent.set(x, find(familyParent.get(x)!));
+    return familyParent.get(x)!;
+  }
+  function union(a: string, b: string) {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) familyParent.set(ra, rb);
+  }
+
+  for (const r of allRels) {
+    if (FAMILY_TYPES.has(r.relationType)) {
+      union(r.sourcePersonId, r.targetPersonId);
+    }
+  }
+
+  // Group people by their cluster root
+  const clusters = new Map<string, Set<string>>();
+  for (const p of allPersons) {
+    if (!familyParent.has(p.id)) continue; // No family relationships
+    const root = find(p.id);
+    if (!clusters.has(root)) clusters.set(root, new Set());
+    clusters.get(root)!.add(p.id);
+  }
+
+  // Find clusters with 3+ people that don't already share a group
+  const existingGroupSets = allGroupsWithMembers.map((g) => new Set(g.members.map((m) => m.personId)));
+
+  for (const [, memberIds] of clusters) {
+    if (memberIds.size < 3) continue;
+
+    // Check if they already share a group
+    const membersArr = [...memberIds];
+    const alreadyGrouped = existingGroupSets.some((gs) =>
+      membersArr.filter((id) => gs.has(id)).length >= Math.min(3, membersArr.length),
+    );
+    if (alreadyGrouped) continue;
+
+    // Try to determine a family name from last names
+    const lastNames = new Map<string, number>();
+    for (const id of memberIds) {
+      const name = nameMap.get(id);
+      if (!name) continue;
+      const parts = name.trim().split(' ');
+      if (parts.length >= 2) {
+        const lastName = parts[parts.length - 1]!;
+        lastNames.set(lastName, (lastNames.get(lastName) ?? 0) + 1);
+      }
+    }
+
+    // Use the most common last name
+    let suggestedName = 'Family Group';
+    let maxCount = 0;
+    for (const [lastName, count] of lastNames) {
+      if (count > maxCount) {
+        maxCount = count;
+        suggestedName = `${lastName} Family`;
+      }
+    }
+
+    suggestedNewGroups.push({
+      suggestedName,
+      memberIds: membersArr,
+      memberNames: membersArr.map((id) => nameMap.get(id) ?? 'Unknown'),
+      reason: `${membersArr.length} people connected by family relationships without a shared group`,
+    });
+  }
+
+  const totalIssues = suggestions.length + duplicates.length + missingReciprocals.length
+    + missingGroupMembers.length + suggestedNewGroups.length;
+
   return NextResponse.json({
     suggestions,
     duplicates,
     missingReciprocals,
-    totalIssues: suggestions.length + duplicates.length + missingReciprocals.length,
+    missingGroupMembers,
+    suggestedNewGroups,
+    totalIssues,
   });
 }
