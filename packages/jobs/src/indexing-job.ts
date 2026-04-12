@@ -103,14 +103,18 @@ export class IndexingJob {
       // If cancelled or interrupted by deadline, stop here.
       if (this._cancelled) return;
       if (this._interrupted) {
-        // Log what happened so the admin can see it in the job log
-        await this.jobManager.updateProgress(jobId, 0, {
+        const reason = this._deadline > 0 ? 'Vercel timeout — will auto-continue' : 'Watchdog: no activity for 2 minutes';
+        // Mark as COMPLETED with partial progress so the stale job expiry
+        // doesn't kill it. The UI will auto-continue via the response.
+        await this.jobManager.markCompleted(jobId);
+        await this.jobManager.updateProgress(jobId, 0.5, {
           filesProcessed: this._filesProcessed,
           foldersProcessed: this._foldersProcessed,
           images: this._imageCount,
           videos: this._videoCount,
           currentPath: this._currentPath,
-          interruptReason: this._deadline > 0 ? 'Vercel timeout — will auto-continue' : 'Watchdog: no activity for 2 minutes',
+          interruptReason: reason,
+          partial: true,
         }).catch(() => {});
         return;
       }

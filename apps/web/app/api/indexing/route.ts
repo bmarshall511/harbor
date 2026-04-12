@@ -7,8 +7,9 @@ import { isCloudMode } from '@/lib/deployment';
 
 export const maxDuration = 120;
 
-/** Max execution time per chunk (seconds). Leave 20s buffer for Vercel. */
-const CHUNK_TIMEOUT_MS = isCloudMode ? 95_000 : 0; // 0 = no timeout for local
+/** Max execution time per chunk. 80s leaves 40s buffer for Vercel's 120s limit
+ * (need time for post-interrupt cleanup, DB writes, and response). */
+const CHUNK_TIMEOUT_MS = isCloudMode ? 80_000 : 0; // 0 = no timeout for local
 
 const rootRepo = new ArchiveRootRepository();
 
