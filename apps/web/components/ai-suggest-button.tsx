@@ -110,9 +110,8 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: 'Something went wrong. Check AI settings.' }));
-        if (err.debug) console.warn('[AI Suggest] Debug:', err.debug);
-        throw new Error(err.message || 'Something went wrong. Check AI settings.');
+        const err = await res.json().catch(() => ({ message: `Request failed (${res.status})` }));
+        throw new Error(err.message || `Request failed (${res.status})`);
       }
 
       const result = await res.json() as SuggestResponse;
@@ -248,17 +247,42 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
               </div>
             )}
 
-            {/* Error */}
+            {/* Error — show details + tone selector for retry */}
             {error && !loading && (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                  <p className="text-sm text-destructive">{error}</p>
+                  <div>
+                    <p className="text-sm text-destructive">{error}</p>
+                  </div>
                 </div>
+
+                {/* Tone selector — let user change before retrying */}
+                <div className="flex items-center gap-3">
+                  <label className="text-xs font-medium text-muted-foreground shrink-0">Tone:</label>
+                  <select
+                    value={toneOverride}
+                    onChange={(e) => setToneOverride(e.target.value)}
+                    className="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <option value="">Default (from settings)</option>
+                    {(() => {
+                      const groups = [...new Set(TONE_OPTIONS.filter((t) => t.group).map((t) => t.group))];
+                      return groups.map((group) => (
+                        <optgroup key={group} label={group}>
+                          {TONE_OPTIONS.filter((t) => t.group === group).map((t) => (
+                            <option key={t.value} value={t.value}>{t.label}</option>
+                          ))}
+                        </optgroup>
+                      ));
+                    })()}
+                  </select>
+                </div>
+
                 <button
                   type="button"
                   onClick={fetchSuggestions}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition"
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                   Try again

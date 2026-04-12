@@ -145,7 +145,7 @@ export async function POST(request: Request) {
       'gpt-4o': { input: 2.5, output: 10 },
       'gpt-4o-mini': { input: 0.15, output: 0.6 },
       'claude-sonnet-4-20250514': { input: 3, output: 15 },
-      'gemini-2.0-flash': { input: 0.1, output: 0.4 },
+      'gemini-2.5-flash-preview-05-20': { input: 0.15, output: 0.6 },
       'gemini-1.5-pro': { input: 1.25, output: 5 },
     };
     const rates = costTable[model] ?? { input: 2.5, output: 10 };
@@ -178,10 +178,8 @@ export async function POST(request: Request) {
         where: { id: jobId },
         data: { status: 'FAILED', error: technicalError, completedAt: new Date() },
       }).catch(() => {});
-      // User-friendly message — don't expose technical details
       return NextResponse.json({
-        message: 'Could not generate suggestions. The AI provider returned an error. Try a different tone or check your API key in Settings.',
-        debug: technicalError, // Included for admin debugging via browser devtools
+        message: `AI error: ${technicalError}`,
       }, { status: 502 });
     }
 

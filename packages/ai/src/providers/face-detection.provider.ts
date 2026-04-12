@@ -128,7 +128,7 @@ export class FaceDetectionProvider implements AiProvider {
   }
 
   private async callGemini(base64: string, mimeType: string): Promise<string> {
-    const model = this.config.model ?? 'gemini-2.0-flash';
+    const model = this.config.model ?? 'gemini-2.5-flash-preview-05-20';
 
     const res = await globalThis.fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.config.apiKey}`,
