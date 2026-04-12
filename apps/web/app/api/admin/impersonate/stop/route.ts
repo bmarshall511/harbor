@@ -18,11 +18,23 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL('/settings?s=users', request.url));
   }
 
-  const isSecure = url.protocol === 'https:';
-  const cookieOpts = `; HttpOnly; Path=/; SameSite=Lax; Max-Age=2592000${isSecure ? '; Secure' : ''}`;
+  const proto = request.headers.get('x-forwarded-proto') ?? url.protocol.replace(':', '');
+  const isSecure = proto === 'https';
 
   const response = NextResponse.redirect(new URL('/settings?s=users', request.url));
-  response.headers.append('Set-Cookie', `harbor-session=${adminSession}${cookieOpts}`);
-  response.headers.append('Set-Cookie', `harbor-admin-session=; HttpOnly; Path=/; Max-Age=0`);
+
+  response.cookies.set('harbor-session', adminSession, {
+    httpOnly: true,
+    path: '/',
+    sameSite: 'lax',
+    maxAge: 2592000,
+    secure: isSecure,
+  });
+  response.cookies.set('harbor-admin-session', '', {
+    httpOnly: true,
+    path: '/',
+    maxAge: 0,
+  });
+
   return response;
 }

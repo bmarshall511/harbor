@@ -416,20 +416,54 @@ export class SearchRepository {
 
   /** Fallback ILIKE search when tsquery parsing fails. */
   private async searchFilesIlike(options: SearchOptions) {
-    const where: Prisma.FileWhereInput = { status: { notIn: ['DELETED', 'PENDING_DELETE'] } };
+    const andConditions: Prisma.FileWhereInput[] = [
+      { status: { notIn: ['DELETED', 'PENDING_DELETE'] } },
+    ];
 
     if (options.query) {
-      where.OR = [
-        { name: { contains: options.query, mode: 'insensitive' } },
-        { title: { contains: options.query, mode: 'insensitive' } },
-        { description: { contains: options.query, mode: 'insensitive' } },
-        { tags: { some: { tag: { name: { contains: options.query, mode: 'insensitive' } } } } },
-      ];
+      andConditions.push({
+        OR: [
+          { name: { contains: options.query, mode: 'insensitive' } },
+          { title: { contains: options.query, mode: 'insensitive' } },
+          { description: { contains: options.query, mode: 'insensitive' } },
+          { tags: { some: { tag: { name: { contains: options.query, mode: 'insensitive' } } } } },
+        ],
+      });
     }
 
-    if (options.archiveRootIds?.length) where.archiveRootId = { in: options.archiveRootIds };
-    if (options.folderIds?.length) where.folderId = { in: options.folderIds };
-    if (options.mimeTypes?.length) where.mimeType = { in: options.mimeTypes };
+    if (options.archiveRootIds?.length) andConditions.push({ archiveRootId: { in: options.archiveRootIds } });
+    if (options.folderIds?.length) andConditions.push({ folderId: { in: options.folderIds } });
+    if (options.mimeTypes?.length) andConditions.push({ mimeType: { in: options.mimeTypes } });
+    if (options.tags?.length) {
+      andConditions.push({ tags: { some: { tag: { name: { in: options.tags } } } } });
+    }
+    if (options.dateFrom) andConditions.push({ fileCreatedAt: { gte: options.dateFrom } });
+    if (options.dateTo) andConditions.push({ fileCreatedAt: { lte: options.dateTo } });
+    if (options.ratingMin !== undefined) andConditions.push({ rating: { gte: options.ratingMin } });
+    if (options.ratingMax !== undefined) andConditions.push({ rating: { lte: options.ratingMax } });
+
+    // JSONB filters (adult content, people) — use Prisma's JSON path filtering.
+    if (options.adultContent?.length) {
+      // Match files where meta.fields.adult_content array contains any of the requested values.
+      andConditions.push({
+        OR: options.adultContent.map((label) => ({
+          meta: { path: ['fields', 'adult_content'], array_contains: [label] },
+        })),
+      });
+    }
+    if (options.people?.length) {
+      // Match files where meta.fields.people contains an element with a matching name.
+      // Prisma doesn't support deep array-element matching, so use string_contains
+      // on the serialized JSON as an approximation. The primary FTS path handles
+      // this precisely; this is only a fallback.
+      andConditions.push({
+        OR: options.people.map((name) => ({
+          meta: { path: ['fields', 'people'], string_contains: name },
+        })),
+      });
+    }
+
+    const where: Prisma.FileWhereInput = { AND: andConditions };
 
     const [files, total] = await Promise.all([
       db.file.findMany({
