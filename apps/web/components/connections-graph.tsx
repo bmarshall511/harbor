@@ -187,6 +187,7 @@ function RelationshipEdge({
   const relationType = edgeData?.relationType ?? '';
   const displayLabel = edgeData?.label ?? relationType.replace(/_/g, ' ');
   const color = getEdgeColor(relationType);
+  const isSameRank = ['spouse', 'partner', 'sibling', 'friend', 'cousin', 'colleague'].includes(relationType);
 
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX, sourceY, targetX, targetY,
@@ -201,6 +202,7 @@ function RelationshipEdge({
         style={{
           stroke: color,
           strokeWidth: selected ? 2.5 : 1.5,
+          strokeDasharray: isSameRank ? '6 3' : undefined,
           opacity: selected ? 1 : 0.6,
         }}
       />
