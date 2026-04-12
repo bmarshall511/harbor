@@ -2768,59 +2768,54 @@ function PersonRelationshipsSection() {
       </div>
 
       {showAdd && (
-        <div className="mt-3 rounded-lg border border-border bg-card p-3 space-y-3">
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-            <select
-              value={sourceId}
-              onChange={(e) => setSourceId(e.target.value)}
-              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            >
-              <option value="">Select person...</option>
-              {dbPeople.map((p) => (
-                <option key={p.id} value={p.id!}>
-                  {p.entityType === 'PET' ? '🐾 ' : ''}{p.name}
-                </option>
-              ))}
-            </select>
-            <ArrowRight className="h-4 w-4 text-muted-foreground" />
-            <select
-              value={targetId}
-              onChange={(e) => setTargetId(e.target.value)}
-              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            >
-              <option value="">Select person...</option>
-              {dbPeople.filter((p) => p.id !== sourceId).map((p) => (
-                <option key={p.id} value={p.id!}>
-                  {p.entityType === 'PET' ? '🐾 ' : ''}{p.name}
-                </option>
-              ))}
-            </select>
+        <div className="mt-3 rounded-lg border border-border bg-card p-4 space-y-4">
+          {/* Person pickers with avatars */}
+          <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
+            <PersonPickerGrid
+              people={dbPeople}
+              selectedId={sourceId}
+              onSelect={setSourceId}
+              label="From"
+            />
+            <div className="flex flex-col items-center gap-1 pt-6">
+              <ArrowRight className="h-4 w-4 text-muted-foreground" />
+              <select
+                value={relType}
+                onChange={(e) => setRelType(e.target.value)}
+                className="w-28 rounded-md border border-border bg-background px-1.5 py-1 text-[11px] text-center focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                {RELATIONSHIP_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+            <PersonPickerGrid
+              people={dbPeople.filter((p) => p.id !== sourceId)}
+              selectedId={targetId}
+              onSelect={setTargetId}
+              label="To"
+            />
           </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={relType}
-              onChange={(e) => setRelType(e.target.value)}
-              className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            >
-              {RELATIONSHIP_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
+
+          {/* Options row */}
+          <div className="flex items-center gap-3">
             <input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder="Custom label (optional)"
-              className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              className="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
             />
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap cursor-pointer">
               <input type="checkbox" checked={bidir} onChange={(e) => setBidir(e.target.checked)} className="h-3.5 w-3.5 rounded border-border" />
               Bidirectional
             </label>
           </div>
+
+          {/* Actions */}
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => setShowAdd(false)}
+              onClick={() => { setShowAdd(false); setSourceId(''); setTargetId(''); }}
               className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
             >
               Cancel
@@ -2899,6 +2894,72 @@ function PersonRelationshipsSection() {
         </div>
       )}
     </section>
+  );
+}
+
+// ─── Person Picker Grid (avatar-based selector) ──────────────────────────────
+
+function PersonPickerGrid({
+  people,
+  selectedId,
+  onSelect,
+  label,
+}: {
+  people: Array<{ id: string | null; name: string | null; avatarUrl: string | null; entityType?: string }>;
+  selectedId: string;
+  onSelect: (id: string) => void;
+  label: string;
+}) {
+  return (
+    <div>
+      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
+      <div className="grid grid-cols-4 gap-1.5 max-h-32 overflow-y-auto rounded-lg border border-border bg-background p-2">
+        {people.map((p) => {
+          if (!p.id) return null;
+          const isPet = p.entityType === 'PET';
+          const isSelected = selectedId === p.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => onSelect(p.id!)}
+              className={cn(
+                'flex flex-col items-center gap-1 rounded-lg p-1.5 transition-all',
+                isSelected
+                  ? 'bg-primary/10 ring-2 ring-primary'
+                  : 'hover:bg-accent',
+              )}
+              title={p.name ?? ''}
+            >
+              <div className={cn(
+                'relative flex h-8 w-8 items-center justify-center overflow-hidden',
+                isPet ? 'rounded-lg' : 'rounded-full',
+                !isSelected && 'ring-1 ring-border',
+              )}>
+                {p.avatarUrl ? (
+                  <img src={p.avatarUrl} alt="" className="h-full w-full object-cover" />
+                ) : isPet ? (
+                  <PawPrint className="h-3.5 w-3.5 text-amber-500" />
+                ) : (
+                  <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                )}
+                {isSelected && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-primary/30">
+                    <Check className="h-3.5 w-3.5 text-white drop-shadow" />
+                  </div>
+                )}
+              </div>
+              <span className="max-w-[4rem] truncate text-[9px] text-muted-foreground">
+                {p.name}
+              </span>
+            </button>
+          );
+        })}
+        {people.length === 0 && (
+          <p className="col-span-4 py-2 text-center text-[11px] text-muted-foreground">No people yet</p>
+        )}
+      </div>
+    </div>
   );
 }
 
