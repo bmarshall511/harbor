@@ -2227,6 +2227,7 @@ function PeopleManagementSection() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState<string>('');
+  const [linkingUserId, setLinkingUserId] = useState<string | null>(null); // Person ID being linked to a user
   const [mergeSelection, setMergeSelection] = useState<Set<string>>(new Set());
   const [merging, setMerging] = useState(false);
 
@@ -2606,31 +2607,29 @@ function PeopleManagementSection() {
                               <span className="flex items-center gap-1">
                                 <Link2 className="h-2.5 w-2.5" />
                                 @{person.linkedUser.username}
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      await fetch(`/api/persons/${person.id}`, {
+                                        method: 'PATCH',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ linkedUserId: null }),
+                                      });
+                                      queryClient.invalidateQueries({ queryKey: ['persons'] });
+                                      toast.success('Unlinked');
+                                    } catch { toast.error('Failed to unlink'); }
+                                  }}
+                                  className="rounded p-0.5 hover:bg-accent"
+                                  title="Unlink"
+                                >
+                                  <X className="h-2 w-2" />
+                                </button>
                               </span>
                             ) : isRecord && (
                               <button
                                 type="button"
-                                onClick={async () => {
-                                  const username = prompt('Enter the username to link this person to:');
-                                  if (!username) return;
-                                  try {
-                                    // Find user by username
-                                    const usersRes = await fetch('/api/users');
-                                    const users = await usersRes.json() as Array<{ id: string; username: string }>;
-                                    const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
-                                    if (!user) { toast.error(`User "@${username}" not found`); return; }
-                                    const res = await fetch(`/api/persons/${person.id}`, {
-                                      method: 'PATCH',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ linkedUserId: user.id }),
-                                    });
-                                    if (!res.ok) throw new Error((await res.json()).message);
-                                    queryClient.invalidateQueries({ queryKey: ['persons'] });
-                                    toast.success(`Linked to @${username}`);
-                                  } catch (err: unknown) {
-                                    toast.error(err instanceof Error ? err.message : 'Failed to link');
-                                  }
-                                }}
+                                onClick={() => setLinkingUserId(linkingUserId === person.id ? null : person.id!)}
                                 className="flex items-center gap-1 text-primary hover:underline"
                               >
                                 <Link2 className="h-2.5 w-2.5" />
@@ -2680,6 +2679,19 @@ function PeopleManagementSection() {
                         )}
                       </div>
                     )}
+
+                    {/* Inline user link picker */}
+                    {linkingUserId === person.id && (
+                      <UserLinkPicker
+                        personId={person.id!}
+                        personName={person.name ?? ''}
+                        onLinked={() => {
+                          queryClient.invalidateQueries({ queryKey: ['persons'] });
+                          setLinkingUserId(null);
+                        }}
+                        onCancel={() => setLinkingUserId(null)}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -2692,6 +2704,99 @@ function PeopleManagementSection() {
         </div>
       )}
     </section>
+  );
+}
+
+// ─── User Link Picker ─────────────────────────────────────────────────────────
+
+/** Inline searchable user picker for linking a person to an app user. */
+function UserLinkPicker({
+  personId,
+  personName,
+  onLinked,
+  onCancel,
+}: {
+  personId: string;
+  personName: string;
+  onLinked: () => void;
+  onCancel: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [linking, setLinking] = useState(false);
+
+  const { data: users = [] } = useQuery({
+    queryKey: ['users-picker'],
+    queryFn: async () => {
+      const res = await fetch('/api/users/picker');
+      if (!res.ok) return [];
+      return res.json() as Promise<Array<{ id: string; username: string; displayName: string }>>;
+    },
+  });
+
+  const filtered = users.filter((u) =>
+    !search || u.displayName.toLowerCase().includes(search.toLowerCase()) || u.username.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  const handleLink = async (userId: string, username: string) => {
+    setLinking(true);
+    try {
+      const res = await fetch(`/api/persons/${personId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ linkedUserId: userId }),
+      });
+      if (!res.ok) throw new Error((await res.json()).message);
+      toast.success(`${personName} linked to @${username}`);
+      onLinked();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to link');
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[11px] font-medium text-foreground">
+          Link <span className="font-semibold">{personName}</span> to an app user
+        </p>
+        <button type="button" onClick={onCancel} className="rounded p-0.5 text-muted-foreground hover:text-foreground">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search users..."
+        className="mb-2 w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+        autoFocus
+        onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); }}
+      />
+      <div className="max-h-36 overflow-y-auto space-y-0.5">
+        {filtered.length > 0 ? filtered.slice(0, 20).map((u) => (
+          <button
+            key={u.id}
+            type="button"
+            onClick={() => handleLink(u.id, u.username)}
+            disabled={linking}
+            className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs transition hover:bg-accent disabled:opacity-50"
+          >
+            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <UserPlus className="h-3.5 w-3.5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium truncate">{u.displayName}</p>
+              <p className="text-[10px] text-muted-foreground">@{u.username}</p>
+            </div>
+          </button>
+        )) : (
+          <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">
+            {search ? 'No users match' : 'No users available'}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 
