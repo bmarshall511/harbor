@@ -37,6 +37,10 @@ import {
   Search,
   LogIn,
   Link2,
+  PawPrint,
+  Network,
+  ArrowRight,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useAuth } from '@/lib/use-auth';
 import { useState, useEffect } from 'react';
@@ -225,7 +229,7 @@ function SettingsContent({ section }: { section: SettingsSectionId }) {
     case 'appearance': return <AppearanceSection />;
     case 'general': return <GeneralSettingsSection />;
     case 'users': return <UserManagementSection />;
-    case 'people': return <PeopleManagementSection />;
+    case 'people': return <><PeopleManagementSection /><PersonRelationshipsSection /></>;
     case 'search-analytics': return <SearchAnalyticsSection />;
     case 'metadata': return <MetadataFieldsSection />;
     case 'archive-roots': return <ArchiveRootsSection />;
@@ -2217,6 +2221,7 @@ function PeopleManagementSection() {
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newEntityType, setNewEntityType] = useState<'PERSON' | 'PET'>('PERSON');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [mergeSelection, setMergeSelection] = useState<Set<string>>(new Set());
@@ -2230,6 +2235,7 @@ function PeopleManagementSection() {
         id: string | null;
         name: string | null;
         avatarUrl: string | null;
+        entityType?: 'PERSON' | 'PET';
         isConfirmed: boolean;
         faceCount: number;
         linkedUser: { id: string; username: string; displayName: string } | null;
@@ -2240,13 +2246,13 @@ function PeopleManagementSection() {
   });
 
   const createMut = useMutation({
-    mutationFn: async (nameOverride?: string) => {
-      const personName = (nameOverride ?? newName).trim();
+    mutationFn: async (opts?: { name?: string; entityType?: 'PERSON' | 'PET' }) => {
+      const personName = (opts?.name ?? newName).trim();
       if (!personName) throw new Error('Name is required');
       const res = await fetch('/api/persons', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: personName }),
+        body: JSON.stringify({ name: personName, entityType: opts?.entityType ?? newEntityType }),
       });
       if (!res.ok) throw new Error((await res.json()).message);
       return res.json();
@@ -2254,8 +2260,9 @@ function PeopleManagementSection() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['persons'] });
       setNewName('');
+      setNewEntityType('PERSON');
       setShowCreate(false);
-      toast.success('Person created');
+      toast.success(newEntityType === 'PET' ? 'Pet created' : 'Person created');
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -2402,33 +2409,58 @@ function PeopleManagementSection() {
       </div>
 
       {showCreate && (
-        <div className="mt-3 flex items-center gap-2 rounded-lg border border-border bg-card p-3">
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="Person name"
-            className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && newName.trim()) createMut.mutate(undefined);
-              if (e.key === 'Escape') setShowCreate(false);
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => newName.trim() && createMut.mutate(undefined)}
-            disabled={!newName.trim() || createMut.isPending}
-            className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-          >
-            Create
-          </button>
-          <button
-            type="button"
-            onClick={() => { setShowCreate(false); setNewName(''); }}
-            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
-          >
-            Cancel
-          </button>
+        <div className="mt-3 rounded-lg border border-border bg-card p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            {/* Person/Pet toggle */}
+            <div className="flex items-center rounded-md border border-border">
+              <button
+                type="button"
+                onClick={() => setNewEntityType('PERSON')}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-l-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                  newEntityType === 'PERSON' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent',
+                )}
+              >
+                <Users className="h-3 w-3" /> Person
+              </button>
+              <button
+                type="button"
+                onClick={() => setNewEntityType('PET')}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-r-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                  newEntityType === 'PET' ? 'bg-amber-500 text-white' : 'text-muted-foreground hover:bg-accent',
+                )}
+              >
+                <PawPrint className="h-3 w-3" /> Pet
+              </button>
+            </div>
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder={newEntityType === 'PET' ? 'Pet name' : 'Person name'}
+              className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && newName.trim()) createMut.mutate();
+                if (e.key === 'Escape') setShowCreate(false);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => newName.trim() && createMut.mutate()}
+              disabled={!newName.trim() || createMut.isPending}
+              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            >
+              Create
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowCreate(false); setNewName(''); setNewEntityType('PERSON'); }}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -2454,20 +2486,31 @@ function PeopleManagementSection() {
                       />
                     )}
                     {/* Avatar */}
-                    {person.avatarUrl ? (
-                      <img
-                        src={person.avatarUrl}
-                        alt=""
-                        className="h-10 w-10 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className={cn(
-                        'flex h-10 w-10 items-center justify-center rounded-full',
-                        isRecord ? 'bg-muted text-muted-foreground' : 'bg-amber-500/10 text-amber-600',
-                      )}>
-                        <Users className="h-5 w-5" />
-                      </div>
-                    )}
+                    {(() => {
+                      const isPet = person.entityType === 'PET';
+                      return person.avatarUrl ? (
+                        <div className="relative shrink-0">
+                          <img
+                            src={person.avatarUrl}
+                            alt=""
+                            className={cn('h-10 w-10 object-cover', isPet ? 'rounded-xl' : 'rounded-full')}
+                          />
+                          {isPet && (
+                            <div className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500">
+                              <PawPrint className="h-2 w-2 text-white" />
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className={cn(
+                          'flex h-10 w-10 shrink-0 items-center justify-center',
+                          isPet ? 'rounded-xl bg-amber-500/10 text-amber-600' :
+                          isRecord ? 'rounded-full bg-muted text-muted-foreground' : 'rounded-full bg-amber-500/10 text-amber-600',
+                        )}>
+                          {isPet ? <PawPrint className="h-5 w-5" /> : <Users className="h-5 w-5" />}
+                        </div>
+                      );
+                    })()}
 
                     {/* Info */}
                     <div className="min-w-0 flex-1">
@@ -2502,6 +2545,11 @@ function PeopleManagementSection() {
                         <>
                           <div className="flex items-center gap-2">
                             <p className="text-sm font-medium">{person.name ?? 'Unnamed'}</p>
+                            {person.entityType === 'PET' && (
+                              <span className="flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-600">
+                                <PawPrint className="h-2 w-2" /> Pet
+                              </span>
+                            )}
                             {!isRecord && (
                               <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-600">
                                 From metadata
@@ -2585,7 +2633,7 @@ function PeopleManagementSection() {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => createMut.mutate(person.name ?? undefined)}
+                            onClick={() => createMut.mutate({ name: person.name ?? undefined })}
                             disabled={createMut.isPending}
                             className="rounded-md border border-primary/40 px-2.5 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
                           >
@@ -2601,6 +2649,251 @@ function PeopleManagementSection() {
           ) : (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">
               No people registered yet. Add people here or they will be created automatically when face detection runs.
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─── Person Relationships ─────────────────────────────────────────────────────
+
+const RELATIONSHIP_TYPES = [
+  { value: 'parent', label: 'Parent' },
+  { value: 'child', label: 'Child' },
+  { value: 'sibling', label: 'Sibling' },
+  { value: 'spouse', label: 'Spouse' },
+  { value: 'partner', label: 'Partner' },
+  { value: 'grandparent', label: 'Grandparent' },
+  { value: 'grandchild', label: 'Grandchild' },
+  { value: 'aunt/uncle', label: 'Aunt/Uncle' },
+  { value: 'niece/nephew', label: 'Niece/Nephew' },
+  { value: 'cousin', label: 'Cousin' },
+  { value: 'friend', label: 'Friend' },
+  { value: 'colleague', label: 'Colleague' },
+  { value: 'manager', label: 'Manager' },
+  { value: 'owner', label: 'Owner' },
+  { value: 'pet_of', label: 'Pet Of' },
+];
+
+function PersonRelationshipsSection() {
+  const queryClient = useQueryClient();
+  const [showAdd, setShowAdd] = useState(false);
+  const [sourceId, setSourceId] = useState('');
+  const [targetId, setTargetId] = useState('');
+  const [relType, setRelType] = useState('friend');
+  const [label, setLabel] = useState('');
+  const [bidir, setBidir] = useState(false);
+
+  const { data: people } = useQuery({
+    queryKey: ['persons'],
+    queryFn: async () => {
+      const res = await fetch('/api/persons');
+      return res.json() as Promise<Array<{ id: string | null; name: string | null; avatarUrl: string | null; entityType?: string; source: string }>>;
+    },
+  });
+
+  const { data: relationships, isLoading } = useQuery({
+    queryKey: ['person-relationships'],
+    queryFn: async () => {
+      const res = await fetch('/api/person-relationships');
+      return res.json() as Promise<Array<{
+        id: string;
+        relationType: string;
+        label: string | null;
+        isBidirectional: boolean;
+        sourcePerson: { id: string; name: string | null; avatarUrl: string | null; entityType: string };
+        targetPerson: { id: string; name: string | null; avatarUrl: string | null; entityType: string };
+      }>>;
+    },
+  });
+
+  const dbPeople = (people ?? []).filter((p) => p.source === 'record' && p.id);
+
+  const createMut = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/person-relationships', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourcePersonId: sourceId, targetPersonId: targetId, relationType: relType, label: label || undefined, isBidirectional: bidir }),
+      });
+      if (!res.ok) throw new Error((await res.json()).message);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-relationships'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      setShowAdd(false);
+      setSourceId('');
+      setTargetId('');
+      setRelType('friend');
+      setLabel('');
+      setBidir(false);
+      toast.success('Relationship created');
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/person-relationships/${id}`, { method: 'DELETE' });
+      if (!res.ok && res.status !== 204) throw new Error('Delete failed');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-relationships'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      toast.success('Relationship removed');
+    },
+  });
+
+  return (
+    <section className="mt-10">
+      <SectionHeader
+        icon={Network}
+        title="Relationships"
+        description="Define how people and pets are connected. These relationships power the Connections graph."
+      />
+
+      <div className="mt-4 flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          {relationships?.length ?? 0} {(relationships?.length ?? 0) === 1 ? 'relationship' : 'relationships'}
+        </p>
+        <button
+          type="button"
+          onClick={() => setShowAdd(true)}
+          className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          Add relationship
+        </button>
+      </div>
+
+      {showAdd && (
+        <div className="mt-3 rounded-lg border border-border bg-card p-3 space-y-3">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+            <select
+              value={sourceId}
+              onChange={(e) => setSourceId(e.target.value)}
+              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="">Select person...</option>
+              {dbPeople.map((p) => (
+                <option key={p.id} value={p.id!}>
+                  {p.entityType === 'PET' ? '🐾 ' : ''}{p.name}
+                </option>
+              ))}
+            </select>
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+            <select
+              value={targetId}
+              onChange={(e) => setTargetId(e.target.value)}
+              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="">Select person...</option>
+              {dbPeople.filter((p) => p.id !== sourceId).map((p) => (
+                <option key={p.id} value={p.id!}>
+                  {p.entityType === 'PET' ? '🐾 ' : ''}{p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={relType}
+              onChange={(e) => setRelType(e.target.value)}
+              className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {RELATIONSHIP_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Custom label (optional)"
+              className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
+              <input type="checkbox" checked={bidir} onChange={(e) => setBidir(e.target.checked)} className="h-3.5 w-3.5 rounded border-border" />
+              Bidirectional
+            </label>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAdd(false)}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => createMut.mutate()}
+              disabled={!sourceId || !targetId || createMut.isPending}
+              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            >
+              {createMut.isPending ? 'Creating...' : 'Create'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="mt-4 text-sm text-muted-foreground">Loading...</div>
+      ) : (
+        <div className="mt-4 rounded-lg border border-border">
+          {relationships && relationships.length > 0 ? (
+            <div className="divide-y divide-border">
+              {relationships.map((rel) => (
+                <div key={rel.id} className="flex items-center gap-3 px-4 py-3">
+                  {/* Source */}
+                  <div className="flex items-center gap-2 min-w-0">
+                    {rel.sourcePerson.avatarUrl ? (
+                      <img src={rel.sourcePerson.avatarUrl} alt="" className={cn('h-7 w-7 object-cover', rel.sourcePerson.entityType === 'PET' ? 'rounded-lg' : 'rounded-full')} />
+                    ) : (
+                      <div className={cn('flex h-7 w-7 items-center justify-center', rel.sourcePerson.entityType === 'PET' ? 'rounded-lg bg-amber-500/10' : 'rounded-full bg-muted')}>
+                        {rel.sourcePerson.entityType === 'PET' ? <PawPrint className="h-3 w-3 text-amber-500" /> : <Users className="h-3 w-3 text-muted-foreground" />}
+                      </div>
+                    )}
+                    <span className="text-sm font-medium truncate">{rel.sourcePerson.name}</span>
+                  </div>
+
+                  {/* Relationship label */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {rel.isBidirectional ? <ArrowLeftRight className="h-3 w-3 text-muted-foreground" /> : <ArrowRight className="h-3 w-3 text-muted-foreground" />}
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      {rel.label ?? rel.relationType.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+
+                  {/* Target */}
+                  <div className="flex items-center gap-2 min-w-0">
+                    {rel.targetPerson.avatarUrl ? (
+                      <img src={rel.targetPerson.avatarUrl} alt="" className={cn('h-7 w-7 object-cover', rel.targetPerson.entityType === 'PET' ? 'rounded-lg' : 'rounded-full')} />
+                    ) : (
+                      <div className={cn('flex h-7 w-7 items-center justify-center', rel.targetPerson.entityType === 'PET' ? 'rounded-lg bg-amber-500/10' : 'rounded-full bg-muted')}>
+                        {rel.targetPerson.entityType === 'PET' ? <PawPrint className="h-3 w-3 text-amber-500" /> : <Users className="h-3 w-3 text-muted-foreground" />}
+                      </div>
+                    )}
+                    <span className="text-sm font-medium truncate">{rel.targetPerson.name}</span>
+                  </div>
+
+                  {/* Delete */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm('Remove this relationship?')) deleteMut.mutate(rel.id);
+                    }}
+                    className="ml-auto shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+                    aria-label="Delete relationship"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+              No relationships yet. Add relationships to see them in the Connections graph.
             </p>
           )}
         </div>

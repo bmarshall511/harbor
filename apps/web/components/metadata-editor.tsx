@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { files as filesApi, folders as foldersApi, users as usersApi } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { Pencil, Save, X, Star, Users, UserPlus, Check } from 'lucide-react';
+import { Pencil, Save, X, Star, Users, UserPlus, Check, PawPrint, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { TagEditor } from '@/components/tag-editor';
 import type { FileDto, FolderDto } from '@harbor/types';
@@ -289,8 +289,8 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
     queryKey: ['persons'],
     queryFn: async () => {
       const r = await fetch('/api/persons');
-      if (!r.ok) return [] as Array<{ id: string; name: string | null; avatarUrl: string | null; faceCount: number }>;
-      return (await r.json()) as Array<{ id: string; name: string | null; avatarUrl: string | null; faceCount: number }>;
+      if (!r.ok) return [] as Array<{ id: string; name: string | null; avatarUrl: string | null; entityType?: string; faceCount: number; source: string }>;
+      return (await r.json()) as Array<{ id: string; name: string | null; avatarUrl: string | null; entityType?: string; faceCount: number; source: string }>;
     },
     staleTime: 60_000,
   });
@@ -433,29 +433,111 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
     return items.slice(0, 10);
   }, [registered, knownPersons, remembered, selected, query]);
 
+  // Quick-select: named persons with DB records for the avatar grid
+  const quickSelectPeople = useMemo(() => {
+    return knownPersons
+      .filter((p) => p.name && p.source === 'record')
+      .slice(0, 20);
+  }, [knownPersons]);
+
+  // Look up a person's avatar/entityType from known persons
+  function personMeta(person: Person) {
+    const name = person.name.toLowerCase();
+    const match = knownPersons.find((p) => p.name?.toLowerCase() === name);
+    return { avatarUrl: match?.avatarUrl ?? null, entityType: match?.entityType ?? 'PERSON' };
+  }
+
   return (
     <div>
       <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
         <Users className="h-3 w-3" /> {field.name}
       </label>
 
-      {/* Selected people pills */}
+      {/* Avatar quick-select grid */}
+      {quickSelectPeople.length > 0 && (
+        <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+          {quickSelectPeople.map((p) => {
+            const isPet = p.entityType === 'PET';
+            const isSelected = selected.some((s) => s.name.toLowerCase() === p.name!.toLowerCase());
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  const person: Person = { kind: 'free', name: p.name! };
+                  if (isSelected) remove(person);
+                  else add(person);
+                }}
+                className="group relative flex shrink-0 flex-col items-center gap-0.5"
+                title={p.name!}
+              >
+                <div className={cn(
+                  'relative flex h-9 w-9 items-center justify-center overflow-hidden transition-all',
+                  isPet ? 'rounded-lg' : 'rounded-full',
+                  isSelected
+                    ? 'ring-2 ring-primary ring-offset-1 ring-offset-background'
+                    : 'ring-1 ring-border group-hover:ring-primary/50',
+                )}>
+                  {p.avatarUrl ? (
+                    <img src={p.avatarUrl} alt="" className={cn('h-full w-full object-cover', isPet ? 'rounded-lg' : 'rounded-full')} />
+                  ) : isPet ? (
+                    <PawPrint className="h-4 w-4 text-amber-500" />
+                  ) : (
+                    <User className="h-4 w-4 text-muted-foreground" />
+                  )}
+                  {isSelected && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-primary/30">
+                      <Check className="h-4 w-4 text-white drop-shadow" />
+                    </div>
+                  )}
+                  {isPet && !isSelected && (
+                    <div className="absolute -bottom-px -right-px flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-500">
+                      <PawPrint className="h-1.5 w-1.5 text-white" />
+                    </div>
+                  )}
+                </div>
+                <span className="max-w-[3rem] truncate text-[8px] text-muted-foreground">
+                  {p.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Selected people — avatar pills */}
       {selected.length > 0 && (
         <div className="mb-1.5 flex flex-wrap gap-1">
           {selected.map((p) => {
             const matchUser = matchingUserFor(p);
+            const meta = personMeta(p);
+            const isPet = meta.entityType === 'PET';
             return (
               <span
                 key={personKey(p)}
                 className={cn(
-                  'group inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]',
+                  'group inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px]',
                   p.kind === 'user'
                     ? 'border-primary/40 bg-primary/10 text-primary'
                     : 'border-border bg-muted text-foreground',
                 )}
               >
-                {p.kind === 'user' ? <UserPlus className="h-2.5 w-2.5" /> : null}
-                <span className="max-w-[12ch] truncate">{p.name}</span>
+                {/* Mini avatar */}
+                <div className={cn(
+                  'relative flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden',
+                  isPet ? 'rounded-sm' : 'rounded-full',
+                )}>
+                  {meta.avatarUrl ? (
+                    <img src={meta.avatarUrl} alt="" className="h-full w-full object-cover" />
+                  ) : isPet ? (
+                    <PawPrint className="h-2.5 w-2.5 text-amber-500" />
+                  ) : p.kind === 'user' ? (
+                    <UserPlus className="h-2.5 w-2.5" />
+                  ) : (
+                    <User className="h-2.5 w-2.5 text-muted-foreground" />
+                  )}
+                </div>
+                <span className="max-w-[10ch] truncate">{p.name}</span>
                 {matchUser && (
                   <button
                     type="button"
@@ -513,26 +595,41 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
         />
         {open && suggestions.length > 0 && (
           <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-xl">
-            {suggestions.map((s, i) => (
-              <button
-                key={s.key}
-                type="button"
-                // Use onMouseDown so the click fires before the input's
-                // onBlur closes the dropdown.
-                onMouseDown={(e) => { e.preventDefault(); add(s.person); }}
-                onMouseEnter={() => setHighlight(i)}
-                className={cn(
-                  'flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-xs',
-                  i === highlight ? 'bg-accent text-accent-foreground' : 'text-foreground hover:bg-accent/50',
-                )}
-              >
-                <span className="flex items-center gap-1.5">
-                  {s.person.kind === 'user' ? <UserPlus className="h-3 w-3 text-primary" /> : <Check className="h-3 w-3 text-muted-foreground" />}
-                  <span className="truncate">{s.label}</span>
-                </span>
-                {s.sub && <span className="ml-2 truncate text-[10px] text-muted-foreground">{s.sub}</span>}
-              </button>
-            ))}
+            {suggestions.map((s, i) => {
+              const sMeta = personMeta(s.person);
+              const isPet = sMeta.entityType === 'PET';
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); add(s.person); }}
+                  onMouseEnter={() => setHighlight(i)}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs',
+                    i === highlight ? 'bg-accent text-accent-foreground' : 'text-foreground hover:bg-accent/50',
+                  )}
+                >
+                  {/* Suggestion avatar */}
+                  <div className={cn(
+                    'flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden',
+                    isPet ? 'rounded-sm' : 'rounded-full',
+                    'bg-muted',
+                  )}>
+                    {sMeta.avatarUrl ? (
+                      <img src={sMeta.avatarUrl} alt="" className="h-full w-full object-cover" />
+                    ) : isPet ? (
+                      <PawPrint className="h-2.5 w-2.5 text-amber-500" />
+                    ) : s.person.kind === 'user' ? (
+                      <UserPlus className="h-2.5 w-2.5 text-primary" />
+                    ) : (
+                      <User className="h-2.5 w-2.5 text-muted-foreground" />
+                    )}
+                  </div>
+                  <span className="flex-1 truncate">{s.label}</span>
+                  {s.sub && <span className="truncate text-[10px] text-muted-foreground">{s.sub}</span>}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>

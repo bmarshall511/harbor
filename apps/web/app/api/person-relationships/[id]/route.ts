@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@harbor/database';
 import { requireAuth, requirePermission } from '@/lib/auth';
 
-/** PATCH /api/persons/:id — Update a person (admin only). */
+/** PATCH /api/person-relationships/:id — Update a relationship (admin only). */
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
@@ -12,21 +12,19 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const { id } = await params;
   const body = await request.json();
 
-  const person = await db.person.update({
+  const relationship = await db.personRelationship.update({
     where: { id },
     data: {
-      ...(body.name !== undefined ? { name: body.name } : {}),
-      ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
-      ...(body.linkedUserId !== undefined ? { linkedUserId: body.linkedUserId || null } : {}),
-      ...(body.isConfirmed !== undefined ? { isConfirmed: body.isConfirmed } : {}),
-      ...(body.entityType !== undefined ? { entityType: body.entityType } : {}),
+      ...(body.relationType !== undefined ? { relationType: body.relationType } : {}),
+      ...(body.label !== undefined ? { label: body.label || null } : {}),
+      ...(body.isBidirectional !== undefined ? { isBidirectional: body.isBidirectional } : {}),
     },
   });
 
-  return NextResponse.json(person);
+  return NextResponse.json(relationship);
 }
 
-/** DELETE /api/persons/:id — Delete a person (admin only). Faces are unlinked, not deleted. */
+/** DELETE /api/person-relationships/:id — Delete a relationship (admin only). */
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
@@ -34,6 +32,6 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   if (denied) return denied;
 
   const { id } = await params;
-  await db.person.delete({ where: { id } });
+  await db.personRelationship.delete({ where: { id } });
   return new NextResponse(null, { status: 204 });
 }

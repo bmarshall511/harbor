@@ -134,25 +134,71 @@ export const search = {
   },
 };
 
-// Persons (face-detection based)
+// Persons (face-detection based + admin-created)
 export const persons = {
   list: () =>
     request<Array<{
-      id: string;
+      id: string | null;
       name: string | null;
       avatarUrl: string | null;
+      entityType: 'PERSON' | 'PET';
       isConfirmed: boolean;
       faceCount: number;
       linkedUser: { id: string; username: string; displayName: string } | null;
+      source: 'record' | 'metadata';
+      fileCount: number;
     }>>('/persons'),
-  create: (name: string, linkedUserId?: string) =>
+  create: (name: string, opts?: { linkedUserId?: string; entityType?: 'PERSON' | 'PET' }) =>
     request<{ id: string; name: string }>('/persons', {
       method: 'POST',
-      body: JSON.stringify({ name, linkedUserId }),
+      body: JSON.stringify({ name, ...opts }),
     }),
-  update: (id: string, data: { name?: string; avatarUrl?: string; linkedUserId?: string; isConfirmed?: boolean }) =>
+  update: (id: string, data: { name?: string; avatarUrl?: string; linkedUserId?: string; isConfirmed?: boolean; entityType?: 'PERSON' | 'PET' }) =>
     request<{ id: string }>(`/persons/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: (id: string) => request<void>(`/persons/${id}`, { method: 'DELETE' }),
+};
+
+// Person Relationships
+export const personRelationships = {
+  list: () =>
+    request<Array<{
+      id: string;
+      sourcePersonId: string;
+      targetPersonId: string;
+      relationType: string;
+      label: string | null;
+      isBidirectional: boolean;
+      sourcePerson: { id: string; name: string | null; avatarUrl: string | null; entityType: string };
+      targetPerson: { id: string; name: string | null; avatarUrl: string | null; entityType: string };
+    }>>('/person-relationships'),
+  create: (data: { sourcePersonId: string; targetPersonId: string; relationType: string; label?: string; isBidirectional?: boolean }) =>
+    request<any>('/person-relationships', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: { relationType?: string; label?: string; isBidirectional?: boolean }) =>
+    request<any>(`/person-relationships/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  delete: (id: string) => request<void>(`/person-relationships/${id}`, { method: 'DELETE' }),
+};
+
+// Connections graph
+export const connections = {
+  graph: () =>
+    request<{
+      nodes: Array<{
+        id: string;
+        name: string | null;
+        avatarUrl: string | null;
+        entityType: string;
+        faceCount: number;
+        relationshipCount: number;
+      }>;
+      edges: Array<{
+        id: string;
+        source: string;
+        target: string;
+        relationType: string;
+        label: string | null;
+        isBidirectional: boolean;
+      }>;
+    }>('/connections'),
 };
 
 // Face detection

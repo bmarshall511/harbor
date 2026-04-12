@@ -16,8 +16,9 @@ export async function POST(request: Request) {
     { name: 'Title', key: 'title', fieldType: 'text', sortOrder: 1 },
     { name: 'Description', key: 'description', fieldType: 'textarea', sortOrder: 2 },
     { name: 'Tags', key: 'tags', fieldType: 'multiselect', sortOrder: 3 },
+    { name: 'People', key: 'people', fieldType: 'people', sortOrder: 4, showInSearch: true },
     {
-      name: 'Adult Content', key: 'adult_content', fieldType: 'multiselect', sortOrder: 4,
+      name: 'Adult Content', key: 'adult_content', fieldType: 'multiselect', sortOrder: 5,
       options: [
         { value: 'nudity', label: 'Nudity' },
         { value: 'sexual_acts', label: 'Sexual Acts' },
@@ -25,7 +26,6 @@ export async function POST(request: Request) {
       ],
       showInSearch: true, hiddenByDefault: true,
     },
-    { name: 'People', key: 'people', fieldType: 'people', sortOrder: 5, showInSearch: true },
   ];
 
   let created = 0;
