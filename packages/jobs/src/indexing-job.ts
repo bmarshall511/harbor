@@ -138,6 +138,10 @@ export class IndexingJob {
         return;
       }
 
+      // Link orphaned folders to their parents (flat listing may create
+      // child folders before parents, leaving parent_id NULL).
+      await this.linkOrphanedFolders(root.id);
+
       // Ensure folder hierarchy exists for all indexed files.
       // Some providers (Dropbox) may not return explicit folder entries,
       // so we derive folders from file paths to guarantee correct hierarchy.
@@ -362,11 +366,21 @@ export class IndexingJob {
 
         try {
           if (entry.isDirectory) {
+            // Derive parent path and look up the parent folder
+            const parts = normalizedPath.split('/');
+            const parentPath = parts.slice(0, -1).join('/');
+            let parentFolderId: string | null = null;
+            if (parentPath) {
+              const parent = await this.folderRepo.findByPath(archiveRootId, parentPath);
+              if (parent) parentFolderId = parent.id;
+            }
+
             await this.folderRepo.upsertByPath(archiveRootId, normalizedPath, {
               archiveRoot: { connect: { id: archiveRootId } },
               name: entry.name,
               path: normalizedPath,
-              depth: normalizedPath.split('/').length - 1,
+              depth: parts.length - 1,
+              ...(parentFolderId ? { parent: { connect: { id: parentFolderId } } } : {}),
             });
             this._foldersProcessed++;
             this._lastActivityTime = Date.now();
@@ -727,6 +741,38 @@ export class IndexingJob {
       if (pattern.endsWith('*') && lower.startsWith(pattern.slice(0, -1))) return true;
     }
     return false;
+  }
+
+  /**
+   * Link folders that have no parent_id to their parent folder.
+   * Happens when the flat listing creates a child folder before its parent.
+   */
+  private async linkOrphanedFolders(archiveRootId: string): Promise<void> {
+    const orphaned = await db.folder.findMany({
+      where: { archiveRootId, parentId: null, depth: { gt: 0 } },
+      select: { id: true, path: true },
+    });
+
+    if (orphaned.length === 0) return;
+
+    let linked = 0;
+    for (const folder of orphaned) {
+      const parts = folder.path.split('/');
+      if (parts.length < 2) continue;
+      const parentPath = parts.slice(0, -1).join('/');
+      const parent = await this.folderRepo.findByPath(archiveRootId, parentPath);
+      if (parent) {
+        await db.folder.update({
+          where: { id: folder.id },
+          data: { parentId: parent.id },
+        });
+        linked++;
+      }
+    }
+
+    if (linked > 0) {
+      console.log(`[IndexingJob] Linked ${linked} orphaned folders to parents`);
+    }
   }
 
   /**
