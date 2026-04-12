@@ -9,7 +9,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.job_log', 'access');
   if (denied) return denied;
 
   const { id } = await params;

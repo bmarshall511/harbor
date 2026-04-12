@@ -8,7 +8,25 @@ import { Pencil, Save, X, Star, Users, UserPlus, Check, PawPrint, User } from 'l
 import { AiSuggestButton } from '@/components/ai-suggest-button';
 import { toast } from 'sonner';
 import { TagEditor } from '@/components/tag-editor';
+import { useAuth } from '@/lib/use-auth';
 import type { FileDto, FolderDto } from '@harbor/types';
+
+// ─── Field permission helpers ────────────────────────────────
+
+/** Map template keys to their permission resource names. */
+function fieldPermissionResource(key: string): string {
+  const BUILTIN_MAP: Record<string, string> = {
+    title: 'items.title',
+    description: 'items.description',
+    tags: 'items.tags',
+    adult_content: 'items.adult_content',
+    people: 'items.people',
+    rating: 'items.file_metadata',
+    caption: 'items.file_metadata',
+    altText: 'items.file_metadata',
+  };
+  return BUILTIN_MAP[key] ?? `items.custom.${key}`;
+}
 
 // ─── People field types ───────────────────────────────────────
 
@@ -30,8 +48,16 @@ interface FieldTemplate {
 
 export function FileMetadataEditor({ file }: { file: FileDto }) {
   const queryClient = useQueryClient();
+  const { hasPermission } = useAuth();
   const [editing, setEditing] = useState(false);
   const [formData, setFormData] = useState<Record<string, any>>({});
+
+  // Permission helpers for field-level access
+  const canView = (key: string) => hasPermission(fieldPermissionResource(key), 'view');
+  const canEdit = (key: string) => hasPermission(fieldPermissionResource(key), 'edit');
+  const canEditAny = ['title', 'description', 'tags', 'rating', 'people', 'adult_content'].some(
+    (k) => canEdit(k),
+  );
 
   // Load field templates
   const { data: fields } = useQuery<FieldTemplate[]>({
@@ -116,7 +142,7 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Details</h4>
         <div className="flex items-center gap-1">
-          {(file.mimeType?.startsWith('image/') || file.previews?.length > 0) && (
+          {canEditAny && (file.mimeType?.startsWith('image/') || file.previews?.length > 0) && (
             <AiSuggestButton
               fileId={file.id}
               onSelectTitle={(v) => {
@@ -128,20 +154,17 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
                 setEditing(true);
               }}
               onSelectTags={async (aiTags) => {
-                // Apply tags directly via the file update API (tags are
-                // handled separately from the form — they go through the
-                // tag sync system, not the metadata form save).
                 try {
                   await filesApi.update(file.id, { tags: aiTags });
                   queryClient.invalidateQueries({ queryKey: ['file', file.id] });
                   queryClient.invalidateQueries({ queryKey: ['tags'] });
                 } catch {
-                  // Non-fatal — title/description still applied
+                  // Non-fatal
                 }
               }}
             />
           )}
-          {editing ? (
+          {canEditAny && (editing ? (
             <>
               <button onClick={handleSave} disabled={mutation.isPending}
                 className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
@@ -158,32 +181,32 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
               className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
               <Pencil className="h-3 w-3" /> Edit
             </button>
-          )}
+          ))}
         </div>
       </div>
 
-      {/* Title + Description — always visible, click to edit */}
+      {/* Title + Description — permission-gated */}
       <div className="space-y-2">
-        {editing ? (
+        {canView('title') && (editing && canEdit('title') ? (
           <EditField label="Title" value={formData.title ?? ''} onChange={(v) => setField('title', v)} />
-        ) : (
+        ) : canView('title') ? (
           <ClickToEditField
             label="Title"
             value={file.title}
-            placeholder="Add a title..."
-            onEdit={() => setEditing(true)}
+            placeholder={canEdit('title') ? 'Add a title...' : undefined}
+            onEdit={canEdit('title') ? () => setEditing(true) : undefined}
           />
-        )}
-        {editing ? (
+        ) : null)}
+        {canView('description') && (editing && canEdit('description') ? (
           <EditField label="Description" value={formData.description ?? ''} onChange={(v) => setField('description', v)} multiline />
-        ) : (
+        ) : canView('description') ? (
           <ClickToEditField
             label="Description"
             value={file.description}
-            placeholder="Add a description..."
-            onEdit={() => setEditing(true)}
+            placeholder={canEdit('description') ? 'Add a description...' : undefined}
+            onEdit={canEdit('description') ? () => setEditing(true) : undefined}
           />
-        )}
+        ) : null)}
       </div>
 
       {/* Render remaining fields from templates in order */}
@@ -192,31 +215,49 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
           // Skip title/description — rendered above
           if (field.key === 'title' || field.key === 'description') return null;
 
+          // Check field-level view permission
+          if (!canView(field.key)) return null;
+
+          const fieldEditable = canEdit(field.key);
+
           // Tags get their own dedicated editor
           if (field.key === 'tags') {
-            return <TagEditor key={field.key} entityType="FILE" entityId={file.id} tags={file.tags} />;
+            return fieldEditable
+              ? <TagEditor key={field.key} entityType="FILE" entityId={file.id} tags={file.tags} />
+              : file.tags?.length ? (
+                <div key={field.key}>
+                  <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Tags</label>
+                  <div className="flex flex-wrap gap-1">{file.tags.map((t: any) => (
+                    <span key={t.tag?.name ?? t} className="rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">{t.tag?.name ?? t}</span>
+                  ))}</div>
+                </div>
+              ) : null;
           }
 
           // Rating
           if (field.key === 'rating') {
-            return editing
+            return editing && fieldEditable
               ? <RatingInput key={field.key} rating={formData.rating ?? 0} onChange={(r) => setField('rating', r)} />
               : <RatingDisplay key={field.key} rating={file.rating} />;
           }
 
           // People (registered users + free-text, autocomplete)
           if (field.fieldType === 'people') {
-            return <PeopleField key={field.key} field={field} file={file} />;
+            return fieldEditable
+              ? <PeopleField key={field.key} field={field} file={file} />
+              : <ReadOnlyPeopleField key={field.key} field={field} file={file} />;
           }
 
           // Multiselect (e.g., adult content)
           if (field.fieldType === 'multiselect' && field.options.length > 0) {
-            return <MultiselectField key={field.key} field={field} file={file} />;
+            return fieldEditable
+              ? <MultiselectField key={field.key} field={field} file={file} />
+              : <ReadOnlyMultiselectField key={field.key} field={field} file={file} />;
           }
 
           // Text / textarea fields
           const value = getFieldValue(field.key);
-          if (editing) {
+          if (editing && fieldEditable) {
             return (
               <EditField key={field.key} label={field.name}
                 value={formData[field.key] ?? ''} onChange={(v) => setField(field.key, v)}
@@ -727,6 +768,52 @@ function normalizePeople(raw: unknown): Person[] {
   return out;
 }
 
+// ─── Read-only variants for view-only permissions ────────────
+
+function ReadOnlyMultiselectField({ field, file }: { field: FieldTemplate; file: FileDto }) {
+  const raw = file.meta?.fields?.[field.key];
+  const values: string[] = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+  if (values.length === 0) return null;
+  return (
+    <div>
+      <label className="mb-1 block text-[11px] font-medium text-muted-foreground">{field.name}</label>
+      <div className="flex flex-wrap gap-1">
+        {values.map((v) => {
+          const opt = field.options.find((o) => o.value === v);
+          return (
+            <span key={v} className="rounded-md border border-primary bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+              {opt?.label ?? v}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ReadOnlyPeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
+  const people = normalizePeople(file.meta?.fields?.[field.key]);
+  if (people.length === 0) return null;
+  return (
+    <div>
+      <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+        <Users className="h-3 w-3" /> {field.name}
+      </label>
+      <div className="flex flex-wrap gap-1">
+        {people.map((p) => (
+          <span key={personKey(p)} className={cn(
+            'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px]',
+            p.kind === 'user' ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted text-foreground',
+          )}>
+            <User className="h-3 w-3" />
+            <span className="max-w-[10ch] truncate">{p.name}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Folder Metadata Editor ───────────────────────────────────
 
 export function FolderMetadataEditor({ folder }: { folder: FolderDto }) {
@@ -813,9 +900,19 @@ function MetaField({ label, value }: { label: string; value: string }) {
 function ClickToEditField({ label, value, placeholder, onEdit }: {
   label: string;
   value: string | null | undefined;
-  placeholder: string;
-  onEdit: () => void;
+  placeholder?: string;
+  onEdit?: () => void;
 }) {
+  if (!onEdit) {
+    // Read-only display
+    if (!value) return null;
+    return (
+      <div>
+        <label className="mb-1 block text-[11px] font-medium text-muted-foreground">{label}</label>
+        <div className="px-2 py-1 text-xs text-foreground">{value}</div>
+      </div>
+    );
+  }
   return (
     <div>
       <label className="mb-1 block text-[11px] font-medium text-muted-foreground">{label}</label>
@@ -826,7 +923,7 @@ function ClickToEditField({ label, value, placeholder, onEdit }: {
           value ? 'text-foreground' : 'text-muted-foreground/50 italic',
         )}
       >
-        {value || placeholder}
+        {value || placeholder || label}
       </button>
     </div>
   );

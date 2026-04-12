@@ -17,7 +17,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.delete_queue', 'access');
   if (denied) return denied;
 
   const { id } = await params;

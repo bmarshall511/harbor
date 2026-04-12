@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, Prisma } from '@harbor/database';
-import { requireAuth } from '@/lib/auth';
+import { requireAuth, requirePermission } from '@/lib/auth';
 import { applyIgnoreFilter } from '@/lib/file-filters';
 import { serializeFile } from '@/lib/file-dto';
 
@@ -30,6 +30,8 @@ import { serializeFile } from '@/lib/file-dto';
 export async function GET(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
+  const denied = requirePermission(auth, 'review', 'access');
+  if (denied) return denied;
 
   try {
   const url = new URL(request.url);
@@ -208,6 +210,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
+  const denied = requirePermission(auth, 'review', 'access');
+  if (denied) return denied;
 
   const body = await request.json().catch(() => ({}));
   const fileId = body.fileId;

@@ -8,7 +8,7 @@ import { requireAuth, requirePermission } from '@/lib/auth';
 export async function GET(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.ai', 'access');
   if (denied) return denied;
 
   try {

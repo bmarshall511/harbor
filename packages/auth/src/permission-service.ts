@@ -3,6 +3,8 @@ import type { ArchiveCapability } from '@harbor/types';
 
 export class PermissionService {
   hasPermission(ctx: AuthContext, resource: string, action: string): boolean {
+    // Owner always has all permissions (immutable)
+    if (this.isOwner(ctx)) return true;
     return ctx.roles.some((role) =>
       role.permissions.some((p) => p.resource === resource && p.action === action),
     );

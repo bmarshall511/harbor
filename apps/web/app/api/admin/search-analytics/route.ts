@@ -9,7 +9,7 @@ import { requireAuth, requirePermission } from '@/lib/auth';
 export async function GET(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.search_analytics', 'access');
   if (denied) return denied;
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -72,7 +72,7 @@ export async function GET(request: Request) {
 export async function DELETE(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.search_analytics', 'access');
   if (denied) return denied;
 
   const { count } = await db.searchLog.deleteMany({});

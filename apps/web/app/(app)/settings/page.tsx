@@ -82,22 +82,24 @@ interface SettingsNavEntry {
   label: string;
   icon: typeof Settings;
   group: 'workspace' | 'data' | 'system';
+  /** Permission resource that grants access to this section. */
+  permission: string;
 }
 
 const SETTINGS_NAV: SettingsNavEntry[] = [
-  { id: 'appearance', label: 'Appearance', icon: Sun, group: 'workspace' },
-  { id: 'general', label: 'General', icon: Settings, group: 'workspace' },
-  { id: 'users', label: 'Users & Roles', icon: Users, group: 'workspace' },
-  { id: 'people', label: 'People', icon: Users, group: 'workspace' },
-  { id: 'search-analytics', label: 'Search Analytics', icon: Search, group: 'workspace' },
-  { id: 'metadata', label: 'Metadata Fields', icon: FileText, group: 'data' },
-  { id: 'archive-roots', label: 'Archive Roots', icon: HardDrive, group: 'data' },
-  { id: 'dropbox', label: 'Dropbox', icon: Cloud, group: 'data' },
-  { id: 'ai', label: 'AI Features', icon: Cpu, group: 'data' },
-  { id: 'delete-queue', label: 'Delete Queue', icon: Trash2, group: 'system' },
-  { id: 'job-log', label: 'Job Log', icon: FileText, group: 'system' },
-  { id: 'database', label: 'Database', icon: Database, group: 'system' },
-  { id: 'about', label: 'About', icon: Shield, group: 'system' },
+  { id: 'appearance', label: 'Appearance', icon: Sun, group: 'workspace', permission: 'settings.appearance' },
+  { id: 'general', label: 'General', icon: Settings, group: 'workspace', permission: 'settings.general' },
+  { id: 'users', label: 'Users & Roles', icon: Users, group: 'workspace', permission: 'settings.users' },
+  { id: 'people', label: 'People', icon: Users, group: 'workspace', permission: 'settings.people' },
+  { id: 'search-analytics', label: 'Search Analytics', icon: Search, group: 'workspace', permission: 'settings.search_analytics' },
+  { id: 'metadata', label: 'Metadata Fields', icon: FileText, group: 'data', permission: 'settings.metadata_fields' },
+  { id: 'archive-roots', label: 'Archive Roots', icon: HardDrive, group: 'data', permission: 'settings.archive_roots' },
+  { id: 'dropbox', label: 'Dropbox', icon: Cloud, group: 'data', permission: 'settings.dropbox' },
+  { id: 'ai', label: 'AI Features', icon: Cpu, group: 'data', permission: 'settings.ai' },
+  { id: 'delete-queue', label: 'Delete Queue', icon: Trash2, group: 'system', permission: 'settings.delete_queue' },
+  { id: 'job-log', label: 'Job Log', icon: FileText, group: 'system', permission: 'settings.job_log' },
+  { id: 'database', label: 'Database', icon: Database, group: 'system', permission: 'settings.database' },
+  { id: 'about', label: 'About', icon: Shield, group: 'system', permission: 'settings.about' },
 ];
 
 const GROUP_LABELS: Record<SettingsNavEntry['group'], string> = {
@@ -107,15 +109,18 @@ const GROUP_LABELS: Record<SettingsNavEntry['group'], string> = {
 };
 
 export default function SettingsPage() {
-  // Read the active section from `?s=`. Defaults to 'appearance' so
-  // the page always has something to show on a fresh load. We use
-  // `useState(() => ...)` so the initial render already reflects the
-  // URL — no flash of the wrong section while React mounts.
+  const { hasPermission } = useAuth();
+
+  // Filter nav entries by user's permissions
+  const visibleNav = SETTINGS_NAV.filter((entry) => hasPermission(entry.permission, 'access'));
+
+  // Read the active section from `?s=`. Defaults to first visible section.
+  const defaultSection = visibleNav[0]?.id ?? 'appearance';
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(() => {
-    if (typeof window === 'undefined') return 'appearance';
+    if (typeof window === 'undefined') return defaultSection;
     const param = new URLSearchParams(window.location.search).get('s');
-    if (param && SETTINGS_NAV.some((n) => n.id === param)) return param as SettingsSectionId;
-    return 'appearance';
+    if (param && visibleNav.some((n) => n.id === param)) return param as SettingsSectionId;
+    return defaultSection;
   });
 
   // Push the section into the URL so back/forward and bookmarks work,
@@ -147,7 +152,7 @@ export default function SettingsPage() {
     data: [],
     system: [],
   };
-  for (const entry of SETTINGS_NAV) groups[entry.group].push(entry);
+  for (const entry of visibleNav) groups[entry.group].push(entry);
 
   return (
     <div className="flex h-full">
@@ -210,7 +215,7 @@ export default function SettingsPage() {
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label="Select settings section"
           >
-            {SETTINGS_NAV.map((entry) => (
+            {visibleNav.map((entry) => (
               <option key={entry.id} value={entry.id}>{entry.label}</option>
             ))}
           </select>
@@ -233,7 +238,7 @@ function SettingsContent({ section }: { section: SettingsSectionId }) {
   switch (section) {
     case 'appearance': return <AppearanceSection />;
     case 'general': return <GeneralSettingsSection />;
-    case 'users': return <UserManagementSection />;
+    case 'users': return <><UserManagementSection /><RolePermissionsSection /></>;
     case 'people': return <><PeopleManagementSection /><PersonRelationshipsSection /><PersonGroupsSection /></>;
     case 'search-analytics': return <SearchAnalyticsSection />;
     case 'metadata': return <MetadataFieldsSection />;
@@ -434,7 +439,7 @@ function UserManagementSection() {
   const [newPassword, setNewPassword] = useState('');
   const [newRoleId, setNewRoleId] = useState('');
 
-  const isAdmin = hasPermission('admin', 'manage');
+  const canAccess = hasPermission('settings.users', 'access');
 
   const { data: users, isLoading: usersLoading } = useQuery({
     queryKey: ['admin-users'],
@@ -443,7 +448,7 @@ function UserManagementSection() {
       if (!r.ok) return [];
       return r.json();
     },
-    enabled: isAdmin,
+    enabled: canAccess,
   });
 
   const { data: roles } = useQuery({
@@ -453,7 +458,7 @@ function UserManagementSection() {
       if (!r.ok) return [];
       return r.json();
     },
-    enabled: isAdmin,
+    enabled: canAccess,
   });
 
   const createMutation = useMutation({
@@ -516,7 +521,7 @@ function UserManagementSection() {
     },
   });
 
-  if (!isAdmin) return null;
+  if (!canAccess) return null;
 
   return (
     <section>
@@ -672,15 +677,286 @@ function UserManagementSection() {
   );
 }
 
+// ─── Permission definitions for the admin grid ──────────────
+
+interface PermissionDef {
+  resource: string;
+  action: string;
+  label: string;
+}
+
+const SETTINGS_PERMISSION_DEFS: PermissionDef[] = [
+  { resource: 'settings.appearance', action: 'access', label: 'Appearance' },
+  { resource: 'settings.general', action: 'access', label: 'General Settings' },
+  { resource: 'settings.users', action: 'access', label: 'Users & Roles' },
+  { resource: 'settings.people', action: 'access', label: 'People' },
+  { resource: 'settings.search_analytics', action: 'access', label: 'Search Analytics' },
+  { resource: 'settings.metadata_fields', action: 'access', label: 'Metadata Fields' },
+  { resource: 'settings.archive_roots', action: 'access', label: 'Archive Roots' },
+  { resource: 'settings.dropbox', action: 'access', label: 'Dropbox' },
+  { resource: 'settings.ai', action: 'access', label: 'AI Features' },
+  { resource: 'settings.delete_queue', action: 'access', label: 'Delete Queue' },
+  { resource: 'settings.job_log', action: 'access', label: 'Job Log' },
+  { resource: 'settings.database', action: 'access', label: 'Database' },
+  { resource: 'settings.about', action: 'access', label: 'About' },
+];
+
+const ITEM_FIELD_NAMES = [
+  { key: 'items.title', label: 'Title' },
+  { key: 'items.description', label: 'Description' },
+  { key: 'items.tags', label: 'Tags' },
+  { key: 'items.adult_content', label: 'Adult Content' },
+  { key: 'items.people', label: 'People & Pets' },
+  { key: 'items.file_metadata', label: 'File Metadata' },
+];
+
+function buildItemPermissionDefs(customFields: Array<{ key: string; name: string }>): PermissionDef[] {
+  const defs: PermissionDef[] = [];
+  for (const f of ITEM_FIELD_NAMES) {
+    defs.push({ resource: f.key, action: 'view', label: `${f.label} — View` });
+    defs.push({ resource: f.key, action: 'edit', label: `${f.label} — Edit` });
+  }
+  for (const cf of customFields) {
+    defs.push({ resource: `items.custom.${cf.key}`, action: 'view', label: `${cf.name} — View` });
+    defs.push({ resource: `items.custom.${cf.key}`, action: 'edit', label: `${cf.name} — Edit` });
+  }
+  return defs;
+}
+
+const REVIEW_PERMISSION_DEFS: PermissionDef[] = [
+  { resource: 'review', action: 'access', label: 'Access Review Queue' },
+];
+
+interface RoleWithPerms {
+  id: string;
+  name: string;
+  systemRole: string;
+  permissions: Array<{ resource: string; action: string }>;
+}
+
+function RolePermissionsSection() {
+  const { hasPermission } = useAuth();
+  const queryClient = useQueryClient();
+  const canAccess = hasPermission('settings.users', 'access');
+
+  const { data: roles = [] } = useQuery<RoleWithPerms[]>({
+    queryKey: ['roles'],
+    queryFn: async () => { const r = await fetch('/api/roles'); return r.json(); },
+    enabled: canAccess,
+  });
+
+  const { data: customFields = [] } = useQuery<Array<{ key: string; name: string }>>({
+    queryKey: ['metadata-fields'],
+    queryFn: async () => { const r = await fetch('/api/metadata-fields'); return r.json(); },
+    enabled: canAccess,
+  });
+
+  // Optimistic local state so toggles are instant and don't cause re-renders
+  const [localPerms, setLocalPerms] = useState<Record<string, Array<{ resource: string; action: string }>>>({});
+  const [savingRoles, setSavingRoles] = useState<Set<string>>(new Set());
+
+  // Sync local state from server when roles data changes (initial load)
+  useEffect(() => {
+    if (roles.length > 0 && Object.keys(localPerms).length === 0) {
+      const init: Record<string, Array<{ resource: string; action: string }>> = {};
+      for (const role of roles) {
+        init[role.id] = role.permissions;
+      }
+      setLocalPerms(init);
+    }
+  }, [roles]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveMutation = useMutation({
+    mutationFn: async ({ roleId, permissions }: { roleId: string; permissions: Array<{ resource: string; action: string }> }) => {
+      setSavingRoles((prev) => new Set(prev).add(roleId));
+      const res = await fetch(`/api/roles/${roleId}/permissions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissions }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+    },
+    onSettled: (_data, _err, variables) => {
+      setSavingRoles((prev) => {
+        const next = new Set(prev);
+        if (variables) next.delete(variables.roleId);
+        return next;
+      });
+    },
+    onSuccess: () => {
+      // Silently refresh roles data in background without causing scroll
+      queryClient.invalidateQueries({ queryKey: ['roles'] });
+      // Debounce the auth refresh so rapid toggles don't thrash
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  if (!canAccess || roles.length === 0) return null;
+
+  const itemDefs = buildItemPermissionDefs(customFields);
+
+  // Sort roles: OWNER first, then ADMIN, EDITOR, VIEWER, GUEST
+  const roleOrder = ['OWNER', 'ADMIN', 'EDITOR', 'VIEWER', 'GUEST'];
+  const sortedRoles = [...roles].sort((a, b) => roleOrder.indexOf(a.systemRole) - roleOrder.indexOf(b.systemRole));
+
+  function getPerms(role: RoleWithPerms): Array<{ resource: string; action: string }> {
+    return localPerms[role.id] ?? role.permissions;
+  }
+
+  function roleHasPerm(role: RoleWithPerms, resource: string, action: string): boolean {
+    if (role.systemRole === 'OWNER') return true;
+    return getPerms(role).some((p) => p.resource === resource && p.action === action);
+  }
+
+  function updatePerms(roleId: string, next: Array<{ resource: string; action: string }>) {
+    setLocalPerms((prev) => ({ ...prev, [roleId]: next }));
+    saveMutation.mutate({ roleId, permissions: next });
+  }
+
+  function togglePerm(role: RoleWithPerms, resource: string, action: string) {
+    if (role.systemRole === 'OWNER') return;
+    const perms = getPerms(role);
+    const has = perms.some((p) => p.resource === resource && p.action === action);
+    const next = has
+      ? perms.filter((p) => !(p.resource === resource && p.action === action))
+      : [...perms, { resource, action }];
+    updatePerms(role.id, next);
+  }
+
+  function toggleGroupForRole(role: RoleWithPerms, defs: PermissionDef[]) {
+    if (role.systemRole === 'OWNER') return;
+    const perms = getPerms(role);
+    const allOn = defs.every((d) => perms.some((p) => p.resource === d.resource && p.action === d.action));
+    let next: Array<{ resource: string; action: string }>;
+    if (allOn) {
+      const groupSet = new Set(defs.map((d) => `${d.resource}:${d.action}`));
+      next = perms.filter((p) => !groupSet.has(`${p.resource}:${p.action}`));
+    } else {
+      const existing = new Set(perms.map((p) => `${p.resource}:${p.action}`));
+      next = [...perms];
+      for (const d of defs) {
+        if (!existing.has(`${d.resource}:${d.action}`)) {
+          next.push({ resource: d.resource, action: d.action });
+        }
+      }
+    }
+    updatePerms(role.id, next);
+  }
+
+  const isSaving = savingRoles.size > 0;
+
+  function PermGroup({ title, defs }: { title: string; defs: PermissionDef[] }) {
+    const [collapsed, setCollapsed] = useState(false);
+    return (
+      <div className="rounded-lg border border-border">
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="flex w-full items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-accent/50"
+        >
+          <span>{title}</span>
+          <span className="text-[10px] font-normal">{collapsed ? 'Show' : 'Hide'}</span>
+        </button>
+        {!collapsed && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-t border-border bg-muted/30">
+                  <th className="px-3 py-1.5 text-left font-medium text-muted-foreground">Permission</th>
+                  {sortedRoles.map((role) => (
+                    <th key={role.id} className="px-2 py-1.5 text-center font-medium text-muted-foreground min-w-[70px]">
+                      {role.name}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {/* Toggle all row */}
+                <tr className="border-t border-border bg-muted/10">
+                  <td className="px-3 py-1.5 font-medium italic text-muted-foreground">Toggle All</td>
+                  {sortedRoles.map((role) => {
+                    const allOn = defs.every((d) => roleHasPerm(role, d.resource, d.action));
+                    return (
+                      <td key={role.id} className="px-2 py-1.5 text-center">
+                        <button
+                          onClick={() => toggleGroupForRole(role, defs)}
+                          disabled={role.systemRole === 'OWNER'}
+                          className={cn(
+                            'inline-flex h-5 w-9 items-center rounded-full transition-colors',
+                            allOn ? 'bg-primary' : 'bg-muted-foreground/20',
+                            role.systemRole === 'OWNER' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+                          )}
+                        >
+                          <span className={cn(
+                            'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                            allOn ? 'translate-x-[18px]' : 'translate-x-[3px]',
+                          )} />
+                        </button>
+                      </td>
+                    );
+                  })}
+                </tr>
+                {defs.map((def) => (
+                  <tr key={`${def.resource}:${def.action}`} className="border-t border-border/50">
+                    <td className="px-3 py-1.5 text-foreground">{def.label}</td>
+                    {sortedRoles.map((role) => {
+                      const on = roleHasPerm(role, def.resource, def.action);
+                      return (
+                        <td key={role.id} className="px-2 py-1.5 text-center">
+                          <button
+                            onClick={() => togglePerm(role, def.resource, def.action)}
+                            disabled={role.systemRole === 'OWNER'}
+                            className={cn(
+                              'inline-flex h-5 w-9 items-center rounded-full transition-colors',
+                              on ? 'bg-primary' : 'bg-muted-foreground/20',
+                              role.systemRole === 'OWNER' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+                            )}
+                          >
+                            <span className={cn(
+                              'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                              on ? 'translate-x-[18px]' : 'translate-x-[3px]',
+                            )} />
+                          </button>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <section className="mt-8">
+      <SectionHeader icon={Shield} title="Role Permissions" description="Configure what each role can access and edit" />
+      {isSaving && (
+        <div className="mt-2 flex items-center gap-2 rounded-md bg-primary/10 px-3 py-1.5 text-xs text-primary">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span>Saving permissions...</span>
+        </div>
+      )}
+      <div className="mt-4 space-y-4">
+        <PermGroup title="Settings Access" defs={SETTINGS_PERMISSION_DEFS} />
+        <PermGroup title="Item Fields" defs={itemDefs} />
+        <PermGroup title="Review" defs={REVIEW_PERMISSION_DEFS} />
+      </div>
+    </section>
+  );
+}
+
 function MetadataFieldsSection() {
   const { hasPermission } = useAuth();
   const queryClient = useQueryClient();
-  const isAdmin = hasPermission('admin', 'manage');
+  const canAccess = hasPermission('settings.metadata_fields', 'access');
 
   const { data: fields, isLoading } = useQuery({
     queryKey: ['metadata-fields'],
     queryFn: async () => { const r = await fetch('/api/metadata-fields'); return r.json(); },
-    enabled: isAdmin,
+    enabled: canAccess,
   });
 
   const [showAdd, setShowAdd] = useState(false);
@@ -738,7 +1014,7 @@ function MetadataFieldsSection() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['metadata-fields'] }),
   });
 
-  if (!isAdmin) return null;
+  if (!canAccess) return null;
 
   return (
     <section>

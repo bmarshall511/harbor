@@ -10,7 +10,7 @@ import { getMimeCategory, friendlyName, formatBytes } from '@harbor/utils';
 import { FileMetadataEditor } from '@/components/metadata-editor';
 import { FavoriteButton } from '@/components/favorite-button';
 import { CollectionButton } from '@/components/collection-button';
-import { RenameDialog } from '@/components/file-operations';
+import { RenameDialog, DeleteConfirmDialog } from '@/components/file-operations';
 import { toast } from 'sonner';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -37,6 +37,7 @@ import {
   Pause,
   Volume2,
   VolumeX,
+  Trash2,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 
@@ -450,6 +451,7 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
   const openViewer = useAppStore((s) => s.openViewer);
   const queryClient = useQueryClient();
   const [showRename, setShowRename] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
 
   const reindexMutation = useMutation({
     mutationFn: () => filesApi.reindex(file.id),
@@ -549,6 +551,14 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
           >
             <RefreshCw className={cn('h-3.5 w-3.5', reindexMutation.isPending && 'animate-spin')} />
           </button>
+          <button
+            onClick={() => setShowDelete(true)}
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+            aria-label="Delete file"
+            title="Delete"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
         </div>
 
         {/* File info compact */}
@@ -639,6 +649,14 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
           onClose={() => setShowRename(false)}
         />
       )}
+      {showDelete && (
+        <DeleteConfirmDialog
+          entityType="file"
+          entityId={file.id}
+          entityName={file.name}
+          onClose={() => setShowDelete(false)}
+        />
+      )}
     </div>
   );
 }
@@ -704,8 +722,11 @@ function ReviewVideoPlayer({ file, onOpenViewer }: { file: FileDto; onOpenViewer
   function togglePlay() {
     const v = videoRef.current;
     if (!v) return;
-    if (v.paused) void v.play();
-    else v.pause();
+    if (v.paused) {
+      v.play().catch(() => { /* interrupted — ignore */ });
+    } else {
+      v.pause();
+    }
   }
 
   function seek(e: React.MouseEvent<HTMLDivElement>) {

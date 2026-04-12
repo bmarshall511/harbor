@@ -6,7 +6,7 @@ import { requireAuth, requirePermission } from '@/lib/auth';
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.metadata_fields', 'access');
   if (denied) return denied;
 
   const { id } = await params;
@@ -33,10 +33,20 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.metadata_fields', 'access');
   if (denied) return denied;
 
   const { id } = await params;
+
+  // Look up the template key before deleting so we can clean up permissions
+  const template = await db.metadataFieldTemplate.findUnique({ where: { id } });
   await db.metadataFieldTemplate.delete({ where: { id } });
+
+  // Remove all role permissions for this custom field
+  if (template) {
+    const resource = `items.custom.${template.key}`;
+    await db.rolePermission.deleteMany({ where: { resource } });
+  }
+
   return new NextResponse(null, { status: 204 });
 }

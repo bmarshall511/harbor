@@ -9,6 +9,7 @@ export async function GET(request: Request) {
 
   const roles = await db.role.findMany({
     orderBy: { createdAt: 'asc' },
+    include: { permissions: { select: { resource: true, action: true } } },
   });
 
   return NextResponse.json(roles.map((r) => ({
@@ -16,5 +17,6 @@ export async function GET(request: Request) {
     name: r.name,
     systemRole: r.systemRole,
     description: r.description,
+    permissions: r.permissions.map((p) => ({ resource: p.resource, action: p.action })),
   })));
 }

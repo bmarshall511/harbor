@@ -451,6 +451,8 @@ function ConnectionsLink() {
 function ReviewLink() {
   const router = useRouter();
   const pathname = usePathname();
+  const { hasPermission } = useAuth();
+  const canReview = hasPermission('review', 'access');
   const isActive = pathname === '/review';
   const { data } = useQuery({
     queryKey: ['review-queue-count'],
@@ -463,8 +465,11 @@ function ReviewLink() {
     },
     staleTime: 60_000,
     retry: false,
+    enabled: canReview,
   });
   const count = data?.needsReviewCount ?? 0;
+
+  if (!canReview) return null;
 
   return (
     <button
@@ -644,6 +649,15 @@ function CollectionsSection() {
 
 function SidebarFooterLinks() {
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
+  const { hasPermission } = useAuth();
+
+  // Show settings link only if user has at least one settings permission
+  const hasAnySettings = [
+    'settings.appearance', 'settings.general', 'settings.users', 'settings.people',
+    'settings.search_analytics', 'settings.metadata_fields', 'settings.archive_roots',
+    'settings.dropbox', 'settings.ai', 'settings.delete_queue', 'settings.job_log',
+    'settings.database', 'settings.about',
+  ].some((r) => hasPermission(r, 'access'));
 
   return (
     <div className="space-y-0.5">
@@ -657,13 +671,15 @@ function SidebarFooterLinks() {
           ⌘K
         </kbd>
       </button>
-      <a
-        href="/settings"
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-      >
-        <Settings className="h-4 w-4" aria-hidden="true" />
-        <span>Settings</span>
-      </a>
+      {hasAnySettings && (
+        <a
+          href="/settings"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+        >
+          <Settings className="h-4 w-4" aria-hidden="true" />
+          <span>Settings</span>
+        </a>
+      )}
     </div>
   );
 }

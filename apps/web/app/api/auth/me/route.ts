@@ -23,6 +23,21 @@ export async function GET(request: Request) {
     return response;
   }
 
+  // Flatten permissions from all roles, deduplicated
+  const permSet = new Set<string>();
+  const permissions: Array<{ resource: string; action: string }> = [];
+  for (const role of ctx.roles) {
+    for (const p of role.permissions) {
+      const key = `${p.resource}:${p.action}`;
+      if (!permSet.has(key)) {
+        permSet.add(key);
+        permissions.push({ resource: p.resource, action: p.action });
+      }
+    }
+  }
+
+  const isOwner = ctx.roles.some((r) => r.systemRole === 'OWNER');
+
   const response = NextResponse.json({
     authenticated: true,
     user: {
@@ -30,7 +45,9 @@ export async function GET(request: Request) {
       username: ctx.username,
       displayName: ctx.displayName,
       isLocalUser: ctx.isLocalUser,
+      isOwner,
       roles: ctx.roles.map((r) => ({ name: r.name, systemRole: r.systemRole })),
+      permissions,
     },
   });
 

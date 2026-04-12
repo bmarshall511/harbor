@@ -110,7 +110,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.people', 'access');
   if (denied) return denied;
 
   const { name, linkedUserId, entityType, gender } = await request.json();

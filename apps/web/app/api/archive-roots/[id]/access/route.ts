@@ -14,7 +14,7 @@ const repo = new ArchiveRootRepository();
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const denied = requirePermission(auth, 'archive_roots', 'manage');
+  const denied = requirePermission(auth, 'settings.archive_roots', 'access');
   if (denied) return denied;
 
   const { id } = await params;
@@ -30,7 +30,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const denied = requirePermission(auth, 'archive_roots', 'manage');
+  const denied = requirePermission(auth, 'settings.archive_roots', 'access');
   if (denied) return denied;
 
   const { id } = await params;

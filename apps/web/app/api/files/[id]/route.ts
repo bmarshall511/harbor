@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { FileRepository, ArchiveRootRepository, db } from '@harbor/database';
 import { ArchiveMetadataService } from '@harbor/providers';
 import { fileUpdatePayloadFromJson, syncTagsForFile, metaRootForArchive } from '@harbor/jobs';
-import { requireAuth, requirePermission } from '@/lib/auth';
+import { requireAuth, requirePermission, permissionService } from '@/lib/auth';
+import type { AuthContext } from '@harbor/auth';
 import { audit } from '@/lib/audit';
 import { emit } from '@/lib/events';
 import { serializeFile } from '@/lib/file-dto';
@@ -50,6 +51,31 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!root) return NextResponse.json({ message: 'Archive root not found' }, { status: 404 });
 
   const body = (await request.json()) as Record<string, unknown>;
+
+  // Per-field permission checks: reject any fields the user can't edit
+  const FIELD_PERM_MAP: Record<string, string> = {
+    title: 'items.title',
+    description: 'items.description',
+    tags: 'items.tags',
+    rating: 'items.file_metadata',
+    caption: 'items.file_metadata',
+    altText: 'items.file_metadata',
+    adult_content: 'items.adult_content',
+    people: 'items.people',
+  };
+  const denied_fields: string[] = [];
+  for (const key of Object.keys(body)) {
+    const resource = FIELD_PERM_MAP[key] ?? `items.custom.${key}`;
+    if (!permissionService.hasPermission(auth, resource, 'edit')) {
+      denied_fields.push(key);
+    }
+  }
+  if (denied_fields.length > 0) {
+    return NextResponse.json(
+      { code: 'FORBIDDEN', message: `No edit permission for: ${denied_fields.join(', ')}` },
+      { status: 403 },
+    );
+  }
 
   // Split incoming body into the core/fields/tags partitions of the
   // canonical JSON. Tags are merged with what's already on the file

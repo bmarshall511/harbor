@@ -13,7 +13,7 @@ import { requireAuth, requirePermission, getAuthServiceForRoute } from '@/lib/au
 export async function POST(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.users', 'access');
   if (denied) return denied;
 
   const { userId } = await request.json();

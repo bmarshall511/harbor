@@ -24,7 +24,7 @@ export async function PATCH(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.general', 'access');
   if (denied) return denied;
 
   const body = await request.json();

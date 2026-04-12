@@ -3,12 +3,19 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 
+interface AuthPermission {
+  resource: string;
+  action: string;
+}
+
 interface AuthUser {
   id: string;
   username: string;
   displayName: string;
   isLocalUser: boolean;
+  isOwner: boolean;
   roles: Array<{ name: string; systemRole: string }>;
+  permissions: AuthPermission[];
 }
 
 interface AuthState {
@@ -45,7 +52,6 @@ export function useAuth() {
       return res.json();
     },
     onSuccess: () => {
-      // Full page navigation ensures the cookie is sent with the next request
       window.location.href = '/';
     },
   });
@@ -91,13 +97,10 @@ export function useAuth() {
     registerError: registerMutation.error?.message ?? null,
     registerPending: registerMutation.isPending,
     hasPermission: (resource: string, action: string) => {
-      // Client-side permission check (rough — server enforces the real check)
       if (!data?.user) return false;
-      const systemRoles = data.user.roles.map((r) => r.systemRole);
-      if (systemRoles.includes('OWNER') || systemRoles.includes('ADMIN')) return true;
-      if (action === 'read' && systemRoles.includes('VIEWER')) return true;
-      if (['read', 'write'].includes(action) && systemRoles.includes('EDITOR')) return true;
-      return false;
+      // Owner always has all permissions
+      if (data.user.isOwner) return true;
+      return data.user.permissions.some((p) => p.resource === resource && p.action === action);
     },
   };
 }

@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  const denied = requirePermission(auth, 'admin', 'manage');
+  const denied = requirePermission(auth, 'settings.delete_queue', 'access');
   if (denied) return denied;
 
   const [pending, stats, approvedStats] = await Promise.all([

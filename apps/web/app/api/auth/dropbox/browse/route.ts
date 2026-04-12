@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  const denied = requirePermission(auth, 'archive_roots', 'manage');
+  const denied = requirePermission(auth, 'settings.dropbox', 'access');
   if (denied) return denied;
 
   const { path: dirPath } = await request.json().catch(() => ({ path: '' }));
