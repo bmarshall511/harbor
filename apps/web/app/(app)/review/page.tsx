@@ -483,23 +483,12 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
 
         {/* Preview */}
         <div className="flex flex-1 items-center justify-center overflow-hidden p-4 min-h-0">
-          {hasPreview && !isVideo ? (
-            <button
-              onClick={() => openViewer(file.id, [file])}
-              className="group relative cursor-pointer max-h-full max-w-full flex items-center justify-center"
-            >
-              <img
-                src={getPreviewUrl(file.id, 'LARGE')}
-                alt={(file.meta?.fields?.altText as string | undefined) ?? file.name}
-                className="max-h-full max-w-full rounded-lg object-contain shadow-lg transition-shadow group-hover:shadow-xl"
-                loading="eager"
-              />
-              <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/0 group-hover:bg-black/10 transition-colors">
-                <div className="rounded-full bg-black/50 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Maximize2 className="h-4 w-4 text-white" />
-                </div>
-              </div>
-            </button>
+          {hasPreview && !isVideo && (file.previews?.length > 0 || category === 'image') ? (
+            <ReviewImagePreview
+              file={file}
+              onOpenViewer={() => openViewer(file.id, [file])}
+              onReindexComplete={() => queryClient.invalidateQueries({ queryKey: ['file', file.id] })}
+            />
           ) : isVideo ? (
             <ReviewVideoPlayer file={file} onOpenViewer={() => openViewer(file.id, [file])} />
           ) : (
@@ -672,6 +661,102 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
         />
       )}
     </div>
+  );
+}
+
+// ─── Review Image Preview ─────────────────────────────────────
+
+function ReviewImagePreview({
+  file,
+  onOpenViewer,
+  onReindexComplete,
+}: {
+  file: FileDto;
+  onOpenViewer: () => void;
+  onReindexComplete: () => void;
+}) {
+  const hasCachedPreview = (file.previews?.length ?? 0) > 0;
+  const [imgError, setImgError] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const autoTriggeredRef = useRef<string | null>(null);
+
+  // Auto-reindex if no cached preview (e.g., NEF on Dropbox)
+  useEffect(() => {
+    if (hasCachedPreview || imgError) return;
+    if (autoTriggeredRef.current === file.id) return;
+    if (reindexing) return;
+
+    // Try loading the preview first — if the preview API can serve it
+    // (e.g., Dropbox thumbnail API works for JPEGs), no reindex needed.
+    // The img onError handler will trigger reindex if it fails.
+  }, [file.id, hasCachedPreview, imgError, reindexing]);
+
+  useEffect(() => {
+    if (!imgError || reindexing || autoTriggeredRef.current === file.id) return;
+    autoTriggeredRef.current = file.id;
+    setReindexing(true);
+    setElapsed(0);
+    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
+
+    filesApi.reindex(file.id)
+      .then(() => {
+        onReindexComplete();
+      })
+      .catch(() => {
+        toast.error('Failed to generate preview');
+      })
+      .finally(() => {
+        clearInterval(timer);
+        setReindexing(false);
+      });
+
+    return () => clearInterval(timer);
+  }, [imgError, file.id, reindexing, onReindexComplete]);
+
+  // Reset state when file changes
+  useEffect(() => {
+    setImgError(false);
+    setReindexing(false);
+    setElapsed(0);
+    autoTriggeredRef.current = null;
+  }, [file.id]);
+
+  // Show download/reindex progress
+  if (reindexing) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm font-medium">Generating preview</p>
+        <p className="text-xs text-muted-foreground">
+          Downloading {formatBytes(Number(file.size))} &middot; {elapsed}s
+        </p>
+        <div className="h-1.5 w-48 overflow-hidden rounded-full bg-muted">
+          <div className="h-full w-1/3 animate-[shimmer_1.2s_ease-in-out_infinite] rounded-full bg-primary" />
+        </div>
+      </div>
+    );
+  }
+
+  // Show image (will trigger onError if browser can't render it)
+  return (
+    <button
+      onClick={onOpenViewer}
+      className="group relative cursor-pointer max-h-full max-w-full flex items-center justify-center"
+    >
+      <img
+        src={getPreviewUrl(file.id, 'LARGE')}
+        alt={(file.meta?.fields?.altText as string | undefined) ?? file.name}
+        className="max-h-full max-w-full rounded-lg object-contain shadow-lg transition-shadow group-hover:shadow-xl"
+        loading="eager"
+        onError={() => setImgError(true)}
+      />
+      <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/0 group-hover:bg-black/10 transition-colors">
+        <div className="rounded-full bg-black/50 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Maximize2 className="h-4 w-4 text-white" />
+        </div>
+      </div>
+    </button>
   );
 }
 
