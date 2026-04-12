@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { db, FileRepository, FolderRepository, ArchiveRootRepository, SettingsRepository } from '@harbor/database';
 import { LocalFilesystemProvider, DropboxProvider, ArchiveMetadataService } from '@harbor/providers';
 import { guessMimeType } from '@harbor/utils';
@@ -95,13 +96,22 @@ export class IndexingJob {
       const ignoreStr = await settingsRepo.get('indexing.ignorePatterns', '');
       this.ignorePatterns = ignoreStr.split(',').map((p) => p.trim()).filter(Boolean);
 
-      // For Dropbox archives: pull any existing .harbor/index.json from
-      // Dropbox into the local cache BEFORE indexing starts. This ensures
-      // metadata written by another instance (local or cloud) is picked
-      // up and not overwritten with empty defaults.
-      if (root.providerType === 'DROPBOX') {
+      // For Dropbox archives on local: pull existing .harbor metadata
+      // from Dropbox so we don't overwrite it. Skip on Vercel (cloud)
+      // since /tmp is ephemeral and pulling 200+ files wastes the deadline.
+      const isCloud = process.env.HARBOR_DEPLOYMENT_MODE === 'cloud';
+      if (root.providerType === 'DROPBOX' && !isCloud) {
         await this.pullDropboxMetadata(provider, root.id, root.rootPath);
       }
+
+      // Report initial progress so the UI knows indexing has started
+      await this.jobManager.updateProgress(jobId, 0, {
+        archiveRootId,
+        filesProcessed: 0,
+        foldersProcessed: 0,
+        currentPath: 'Starting...',
+        skipCount: this._skipCount,
+      }).catch(() => {});
 
       // Mark the start time so we can clean up stale entries after indexing
       const indexStartTime = new Date();
@@ -390,9 +400,25 @@ export class IndexingJob {
             const mimeType = guessMimeType(entry.name) ?? entry.mimeType;
             const hash = entry.hash ?? null;
 
-            const itemMetaRoot = metaRootForArchive(archiveRootId, archiveRootPath, provider.type);
-            const itemId = await this.archiveMeta.getOrCreateItemId(itemMetaRoot, normalizedPath);
-            const existingItem = await this.archiveMeta.readItemByUuid(itemMetaRoot, itemId);
+            // On cloud (Vercel), skip the metadata JSON read/write since
+            // /tmp is ephemeral and doesn't persist between function calls.
+            // Just do the DB upsert — metadata will be synced on local runs.
+            const isCloudEnv = process.env.HARBOR_DEPLOYMENT_MODE === 'cloud';
+            let itemId: string;
+            let existingItem: import('@harbor/providers').HarborItemJson | null = null;
+
+            if (!isCloudEnv) {
+              const itemMetaRoot = metaRootForArchive(archiveRootId, archiveRootPath, provider.type);
+              itemId = await this.archiveMeta.getOrCreateItemId(itemMetaRoot, normalizedPath);
+              existingItem = await this.archiveMeta.readItemByUuid(itemMetaRoot, itemId);
+            } else {
+              // Use existing harborItemId from DB if available, else generate one
+              const existing = await db.file.findUnique({
+                where: { archiveRootId_path: { archiveRootId, path: normalizedPath } },
+                select: { harborItemId: true },
+              });
+              itemId = existing?.harborItemId ?? crypto.randomUUID();
+            }
 
             const baseFile = {
               archiveRoot: { connect: { id: archiveRootId } },
@@ -420,7 +446,8 @@ export class IndexingJob {
             this._currentPath = normalizedPath;
             await this._reportProgress();
 
-            if (!existingItem) {
+            if (!isCloudEnv && !existingItem) {
+              const itemMetaRoot = metaRootForArchive(archiveRootId, archiveRootPath, provider.type);
               await this.archiveMeta.updateItem(itemMetaRoot, normalizedPath, {
                 name: entry.name, hash: hash ?? undefined,
                 createdAt: entry.createdAt, modifiedAt: entry.modifiedAt,
