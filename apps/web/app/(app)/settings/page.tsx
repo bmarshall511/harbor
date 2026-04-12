@@ -2222,6 +2222,7 @@ function AiSettingsSection() {
                     <option value="fairytale">Fairytale</option>
                   </optgroup>
                   <optgroup label="Emotional">
+                    <option value="scrapbook">Scrapbook / Family</option>
                     <option value="romantic">Romantic</option>
                     <option value="nostalgic">Nostalgic</option>
                     <option value="melancholic">Melancholic</option>

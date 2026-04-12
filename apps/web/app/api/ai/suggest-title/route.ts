@@ -352,6 +352,7 @@ function buildPrompt(opts: {
     whimsical: 'Write playful, imaginative titles with a sense of wonder and delight.',
     noir: 'Write titles in the style of a 1940s detective film — moody, shadowy, hardboiled.',
     fairytale: 'Write titles like the opening of a fairy tale — enchanting, magical, storybook.',
+    scrapbook: 'Write titles like handwritten captions in a family scrapbook — warm, personal, sentimental, using first names casually. Think "that time we..." or "our little..." style.',
     romantic: 'Write titles dripping with love, longing, and tenderness.',
     nostalgic: 'Write titles that evoke warm memories, the passage of time, and bittersweetness.',
     melancholic: 'Write titles with sadness, loss, and quiet beauty.',

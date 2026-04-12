@@ -29,6 +29,7 @@ const TONE_OPTIONS = [
   { value: 'noir', label: 'Film Noir', group: 'Creative' },
   { value: 'fairytale', label: 'Fairytale', group: 'Creative' },
   // Emotional — mood-driven
+  { value: 'scrapbook', label: 'Scrapbook / Family', group: 'Emotional' },
   { value: 'romantic', label: 'Romantic', group: 'Emotional' },
   { value: 'nostalgic', label: 'Nostalgic', group: 'Emotional' },
   { value: 'melancholic', label: 'Melancholic', group: 'Emotional' },
