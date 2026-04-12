@@ -34,8 +34,9 @@ export class IndexingJob {
   private _interrupted = false;
   private _lastActivityTime = 0;
   private _stuckThresholdMs = 120_000; // 2 minutes without progress = stuck
-  private _skipCount = 0; // For chunked continuation: skip this many entries
-  private _totalEntriesProcessed = 0; // Entries processed in THIS chunk (for resume)
+  private _skipCount = 0;
+  private _totalEntriesProcessed = 0;
+  private _archiveRootId = '';
 
   /** Set a deadline (epoch ms) after which the job will pause for resumption. */
   setDeadline(deadlineMs: number): void {
@@ -75,6 +76,7 @@ export class IndexingJob {
 
     try {
       this._jobId = jobId;
+      this._archiveRootId = archiveRootId;
       this._filesProcessed = 0;
       this._foldersProcessed = 0;
       this._imageCount = 0;
@@ -621,6 +623,7 @@ export class IndexingJob {
     }
 
     await this.jobManager.updateProgress(this._jobId, 0, {
+      archiveRootId: this._archiveRootId,
       filesProcessed: this._filesProcessed,
       foldersProcessed: this._foldersProcessed,
       images: this._imageCount,
@@ -628,6 +631,7 @@ export class IndexingJob {
       audio: this._audioCount,
       documents: this._documentCount,
       other: this._otherCount,
+      skipCount: this._skipCount,
       currentPath: this._currentPath,
     }).catch(() => {});
   }

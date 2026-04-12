@@ -170,7 +170,13 @@ export function IndexingStatus() {
   const docs = (meta?.documents as number) ?? 0;
   const folders = (meta?.foldersProcessed as number) ?? 0;
   const totalFiles = (meta?.filesProcessed as number) ?? 0;
+  const skipCount = (meta?.skipCount as number) ?? 0;
+  const currentPath = (meta?.currentPath as string) ?? '';
+  const currentFile = currentPath ? currentPath.split('/').pop() : '';
   const remaining = activeJobs.length - 1;
+
+  // Files/sec rate
+  const filesPerSec = elapsed > 0 ? (totalFiles / elapsed).toFixed(1) : '—';
 
   // Build a concise breakdown string
   const parts: string[] = [];
@@ -183,11 +189,18 @@ export function IndexingStatus() {
   const breakdown = parts.length > 0 ? parts.join(' · ') : `${totalFiles} files`;
 
   return (
-    <div className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]">
+    <div className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]" title={currentPath || undefined}>
       <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
       <span className="font-semibold text-foreground">{label}</span>
       <span className="tabular-nums text-muted-foreground">{breakdown}</span>
+      <span className="tabular-nums text-muted-foreground/60">{filesPerSec}/s</span>
       <span className="tabular-nums text-muted-foreground/60">{elapsedStr}</span>
+      {skipCount > 0 && (
+        <span className="text-muted-foreground/40" title={`Resumed from entry ${skipCount}`}>chunk</span>
+      )}
+      {currentFile && (
+        <span className="max-w-[120px] truncate text-muted-foreground/40" title={currentPath}>{currentFile}</span>
+      )}
       {remaining > 0 && (
         <span className="text-muted-foreground/60">+{remaining}</span>
       )}

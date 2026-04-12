@@ -1990,44 +1990,72 @@ function JobLogSection() {
             const foldersProcessed = (meta?.foldersProcessed as number) ?? 0;
             const images = (meta?.images as number) ?? 0;
             const videos = (meta?.videos as number) ?? 0;
+            const audio = (meta?.audio as number) ?? 0;
+            const documents = (meta?.documents as number) ?? 0;
+            const other = (meta?.other as number) ?? 0;
             const currentPath = (meta?.currentPath as string) ?? '';
             const interruptReason = (meta?.interruptReason as string) ?? '';
+            const skipCount = (meta?.skipCount as number) ?? 0;
+            const resumeAt = (meta?.resumeAt as number) ?? 0;
+            const partial = (meta?.partial as boolean) ?? false;
+            const archiveRootId = (meta?.archiveRootId as string) ?? '';
+            const providerType = (meta?.providerType as string) ?? '';
             const duration = job.startedAt && job.completedAt
               ? Math.round((new Date(job.completedAt).getTime() - new Date(job.startedAt).getTime()) / 1000)
               : job.startedAt
                 ? Math.round((Date.now() - new Date(job.startedAt).getTime()) / 1000)
                 : null;
+            const filesPerSec = duration && duration > 0 && filesProcessed > 0
+              ? (filesProcessed / duration).toFixed(1)
+              : null;
 
             return (
-              <div key={job.id} className="rounded-lg border border-border p-3 space-y-1.5">
+              <div key={job.id} className={cn('rounded-lg border p-3 space-y-1.5', job.status === 'RUNNING' ? 'border-primary/30 bg-primary/5' : 'border-border')}>
                 <div className="flex items-center gap-2">
                   <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', statusColor[job.status] ?? 'bg-muted text-muted-foreground')}>
-                    {job.status}
+                    {job.status}{partial ? ' (partial)' : ''}
                   </span>
                   <span className="text-xs font-medium">{typeLabel[job.type] ?? job.type}</span>
+                  {providerType && <span className="text-[9px] text-muted-foreground/50">{providerType}</span>}
                   <span className="ml-auto text-[10px] text-muted-foreground">
                     {new Date(job.createdAt).toLocaleString()}
                   </span>
                 </div>
 
                 {/* Stats */}
-                {filesProcessed > 0 && (
-                  <div className="text-[11px] tabular-nums text-muted-foreground">
-                    {filesProcessed} files ({images > 0 ? `${images} img` : ''}{videos > 0 ? ` ${videos} vid` : ''}) · {foldersProcessed} folders
-                    {duration !== null && <> · {duration}s</>}
+                {(filesProcessed > 0 || foldersProcessed > 0) && (
+                  <div className="text-[11px] tabular-nums text-muted-foreground flex flex-wrap gap-x-2">
+                    <span>{filesProcessed} files</span>
+                    {images > 0 && <span className="text-blue-500">{images} img</span>}
+                    {videos > 0 && <span className="text-purple-500">{videos} vid</span>}
+                    {audio > 0 && <span className="text-orange-500">{audio} audio</span>}
+                    {documents > 0 && <span className="text-green-500">{documents} doc</span>}
+                    {other > 0 && <span>{other} other</span>}
+                    <span>{foldersProcessed} folders</span>
+                    {duration !== null && <span>{duration}s</span>}
+                    {filesPerSec && <span className="text-muted-foreground/60">({filesPerSec}/s)</span>}
+                  </div>
+                )}
+
+                {/* Chunk info for Vercel */}
+                {(skipCount > 0 || resumeAt > 0) && (
+                  <div className="text-[10px] text-muted-foreground/60 tabular-nums">
+                    {skipCount > 0 && <span>Skipped first {skipCount} entries · </span>}
+                    {resumeAt > 0 && <span>Next chunk starts at entry {resumeAt}</span>}
                   </div>
                 )}
 
                 {/* Current/last path */}
                 {currentPath && (
-                  <div className="truncate text-[10px] text-muted-foreground/70" title={currentPath}>
-                    Last: {currentPath}
+                  <div className="truncate text-[10px] text-muted-foreground/70 font-mono" title={currentPath}>
+                    {job.status === 'RUNNING' ? '→' : '⏹'} {currentPath}
                   </div>
                 )}
 
                 {/* Interrupt reason */}
                 {interruptReason && (
-                  <div className="text-[10px] text-amber-600">
+                  <div className="text-[10px] text-amber-600 flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3 shrink-0" />
                     {interruptReason}
                   </div>
                 )}
