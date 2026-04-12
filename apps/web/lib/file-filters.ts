@@ -62,8 +62,12 @@ export async function getIgnoreMatcher(): Promise<IgnoreMatcher> {
  * Returns the filtered list (or the original list when no patterns
  * are configured, to avoid an unnecessary copy).
  */
-export async function applyIgnoreFilter<T extends { name: string }>(files: T[]): Promise<T[]> {
+export async function applyIgnoreFilter<T extends { name: string; path?: string }>(files: T[]): Promise<T[]> {
   const matcher = await getIgnoreMatcher();
-  if (matcher.isEmpty) return files;
-  return files.filter((f) => !matcher.matches(f.name));
+  return files.filter((f) => {
+    // Always exclude Harbor internal metadata files
+    if (f.path && (f.path.startsWith('.harbor/') || f.path.includes('/.harbor/'))) return false;
+    if (!matcher.isEmpty && matcher.matches(f.name)) return false;
+    return true;
+  });
 }

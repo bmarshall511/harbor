@@ -764,6 +764,8 @@ export class IndexingJob {
 
   private shouldIgnore(name: string): boolean {
     const lower = name.replace(/\r$/, '').trim().toLowerCase();
+    // Always ignore Harbor's internal metadata directory
+    if (lower === '.harbor') return true;
     for (const rawPattern of this.ignorePatterns) {
       const pattern = rawPattern.trim().toLowerCase();
       if (!pattern) continue;

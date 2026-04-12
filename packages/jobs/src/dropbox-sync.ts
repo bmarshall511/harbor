@@ -122,6 +122,11 @@ export class DropboxSyncService {
             continue; // Not in our archive root
           }
 
+          // Skip .harbor metadata files/folders — internal to Harbor
+          if (normalizedPath.startsWith('.harbor/') || normalizedPath.includes('/.harbor/')) {
+            continue;
+          }
+
           try {
             if (entry['.tag'] === 'deleted') {
               // File or folder was deleted

@@ -45,10 +45,6 @@ export async function GET(request: Request) {
   // Build WHERE clause
   const where: Prisma.FileWhereInput = {
     status: { notIn: ['DELETED', 'PENDING_DELETE'] },
-    NOT: [
-      { path: { startsWith: '.harbor/' } },
-      { path: { contains: '/.harbor/' } },
-    ],
     ...(rootFilter ? { archiveRootId: rootFilter } : {}),
     ...(folderFilter ? await buildFolderFilter(folderFilter) : {}),
   };
