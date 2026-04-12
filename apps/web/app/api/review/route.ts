@@ -87,6 +87,7 @@ export async function GET(request: Request) {
   type Scored = {
     file: (typeof candidates)[number];
     score: number;
+    reviewed: boolean;
     reasons: string[];
   };
 
@@ -154,16 +155,22 @@ export async function GET(request: Request) {
     const daysSince = Math.min(30, Math.floor((now - lastUpdate.getTime()) / (1000 * 60 * 60 * 24)));
     score += daysSince;
 
-    // Items already reviewed get a large penalty so they sort to the bottom
-    if (reviewedAt) {
-      score -= 50;
-    }
+    // Items already reviewed sort to the bottom but still appear.
+    // When all items are reviewed, the queue cycles back to the
+    // oldest-reviewed items first. We use a separate sort key rather
+    // than subtracting from score so reviewed items always trail
+    // unreviewed ones regardless of their metadata completeness.
+    const isReviewed = !!reviewedAt;
 
-    scored.push({ file, score, reasons });
+    scored.push({ file, score, reviewed: isReviewed, reasons });
   }
 
   // Sort by score descending
-  scored.sort((a, b) => b.score - a.score);
+  // Unreviewed items first, then by score descending within each group
+  scored.sort((a, b) => {
+    if (a.reviewed !== b.reviewed) return a.reviewed ? 1 : -1;
+    return b.score - a.score;
+  });
   const page = scored.slice(0, limit);
 
   // Total count

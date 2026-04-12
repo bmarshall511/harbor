@@ -124,7 +124,7 @@ export default function ReviewPage() {
     queryFn: archiveRootsApi.list,
   });
 
-  const queueItems = data?.items ?? [];
+  const queueItems = useMemo(() => data?.items ?? [], [data?.items]);
 
   // The next unvisited item from the queue (skip any already in history)
   const visitedIds = useMemo(() => new Set(history.map((h) => h.file.id)), [history]);
