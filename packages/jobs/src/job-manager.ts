@@ -57,6 +57,21 @@ export class JobManager {
     });
   }
 
+  async cancel(jobId: string): Promise<void> {
+    await db.backgroundJob.update({
+      where: { id: jobId },
+      data: { status: 'FAILED', error: 'Cancelled by user', completedAt: new Date() },
+    });
+  }
+
+  async isCancelled(jobId: string): Promise<boolean> {
+    const job = await db.backgroundJob.findUnique({
+      where: { id: jobId },
+      select: { status: true },
+    });
+    return !job || job.status === 'FAILED' || job.status === 'COMPLETED';
+  }
+
   async findActive() {
     return db.backgroundJob.findMany({
       where: { status: { in: ['QUEUED', 'RUNNING'] } },

@@ -23,6 +23,7 @@ export class IndexingJob {
   private _foldersProcessed = 0;
   private _currentPath = '';
   private _lastProgressUpdate = 0;
+  private _cancelled = false;
 
   async indexArchiveRoot(archiveRootId: string, userId?: string, dropboxCredentials?: { appKey: string; appSecret: string }): Promise<void> {
     const root = await this.rootRepo.findById(archiveRootId);
@@ -38,6 +39,7 @@ export class IndexingJob {
       this._jobId = jobId;
       this._filesProcessed = 0;
       this._foldersProcessed = 0;
+      this._cancelled = false;
       this._lastProgressUpdate = Date.now();
       await this.jobManager.markRunning(jobId);
 
@@ -63,6 +65,9 @@ export class IndexingJob {
         ? ''
         : (root.rootPath === '/' ? '' : root.rootPath);
       await this.indexDirectory(provider, root.id, root.rootPath, startPath, null, 0);
+
+      // If the user cancelled, stop here — the job is already marked FAILED in the DB.
+      if (this._cancelled) return;
 
       // Ensure folder hierarchy exists for all indexed files.
       // Some providers (Dropbox) may not return explicit folder entries,
@@ -172,6 +177,9 @@ export class IndexingJob {
   ): Promise<void> {
     try {
       for await (const entry of provider.listDirectory(dirPath)) {
+        // Abort early if the job was cancelled by the user
+        if (this._cancelled) return;
+
         // Skip entries matching global ignore patterns
         if (this.shouldIgnore(entry.name)) continue;
 
@@ -312,6 +320,13 @@ export class IndexingJob {
     const now = Date.now();
     if (now - this._lastProgressUpdate < 2000) return;
     this._lastProgressUpdate = now;
+
+    // Check if the job was cancelled by the user
+    const cancelled = await this.jobManager.isCancelled(this._jobId).catch(() => false);
+    if (cancelled) {
+      this._cancelled = true;
+      return;
+    }
 
     await this.jobManager.updateProgress(this._jobId, 0, {
       filesProcessed: this._filesProcessed,
