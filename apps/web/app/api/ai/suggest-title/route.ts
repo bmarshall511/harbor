@@ -202,10 +202,19 @@ export async function POST(request: Request) {
     // Calculate cost for display
     const cost = (inputTokens * rates.input + outputTokens * rates.output) / 1_000_000;
 
+    if (suggestions.length === 0) {
+      console.error('[AI/SuggestTitle] No titles parsed from response.');
+      return NextResponse.json({
+        message: `No titles could be extracted from the ${model} response. The model may have returned an unexpected format or refused the request. Try a different tone or model.`,
+        model,
+        provider,
+      }, { status: 502 });
+    }
+
     return NextResponse.json({
       suggestions,
-      descriptions: suggestions.length > 0 ? parsedDescriptions : [],
-      tags: suggestions.length > 0 ? parsedTags : [],
+      descriptions: parsedDescriptions,
+      tags: parsedTags,
       jobId,
       tokens: { input: inputTokens, output: outputTokens },
       cost,
@@ -318,7 +327,7 @@ async function callOpenAI(
         },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 512,
+      max_tokens: 2048,
     }),
   });
 
@@ -333,6 +342,7 @@ async function callOpenAI(
   };
 
   const raw = response.choices[0]?.message?.content ?? '{}';
+  console.log('[AI/OpenAI] Raw response:', raw.substring(0, 500));
   const aiResult = parseAiResponse(raw);
 
   return {
@@ -365,7 +375,7 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 512,
+      max_tokens: 2048,
       messages: [
         {
           role: 'user',
@@ -435,8 +445,14 @@ async function callGemini(
         ],
         generationConfig: {
           responseMimeType: 'application/json',
-          maxOutputTokens: 512,
+          maxOutputTokens: 2048,
         },
+        safetySettings: [
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+        ],
       }),
     },
   );
@@ -448,10 +464,17 @@ async function callGemini(
 
   const response = await res.json() as {
     candidates?: Array<{ content: { parts: Array<{ text?: string }> } }>;
+    promptFeedback?: { blockReason?: string };
     usageMetadata?: { promptTokenCount: number; candidatesTokenCount: number };
   };
 
+  // Check if Gemini blocked the request (content safety)
+  if (response.promptFeedback?.blockReason) {
+    throw new Error(`Gemini blocked this image (reason: ${response.promptFeedback.blockReason}). Try a different image or use OpenAI/Anthropic instead.`);
+  }
+
   const raw = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
+  console.log('[AI/Gemini] Raw response:', raw.substring(0, 500));
   const aiResult = parseAiResponse(raw);
 
   return {

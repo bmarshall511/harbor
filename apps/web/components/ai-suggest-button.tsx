@@ -91,7 +91,8 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
       if (titleJobs.length === 0) return null;
       const avgCost = titleJobs.reduce((s: number, j: any) => s + (j.cost ?? 0), 0) / titleJobs.length;
       const avgTime = titleJobs.reduce((s: number, j: any) => s + (j.elapsedMs ?? 0), 0) / titleJobs.length;
-      return { avgCost, avgTime, count: titleJobs.length };
+      const lastModel = titleJobs[0]?.model ?? null;
+      return { avgCost, avgTime, count: titleJobs.length, model: lastModel };
     },
     staleTime: 60_000,
     enabled: open,
@@ -115,9 +116,6 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
       }
 
       const result = await res.json() as SuggestResponse;
-      if (!result.suggestions?.length) {
-        throw new Error('No suggestions returned. Try a different tone or check your API key.');
-      }
       setData(result);
       // Auto-select all tags and first description
       setSelectedTags(new Set(result.tags));
@@ -216,6 +214,7 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
                 <div className="rounded-lg bg-muted/50 px-4 py-3 text-xs text-muted-foreground space-y-1">
                   {usageStats ? (
                     <>
+                      <p>Model: <span className="font-medium text-foreground">{usageStats.model ?? 'Default from settings'}</span></p>
                       <p>Avg cost: <span className="font-medium text-foreground">${usageStats.avgCost.toFixed(4)}</span> per image <span className="text-muted-foreground/60">(based on {usageStats.count} past runs)</span></p>
                       <p>Avg time: <span className="font-medium text-foreground">{(usageStats.avgTime / 1000).toFixed(1)}s</span></p>
                     </>
