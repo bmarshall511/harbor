@@ -114,6 +114,21 @@ export async function POST(request: Request) {
     const base64 = imageBuffer.toString('base64');
     const dataUrl = `data:${file.mimeType};base64,${base64}`;
 
+    // ── Extract existing metadata for context ──────────────────
+    const existingTags = (file as any).tags?.map((t: any) => t.tag?.name).filter(Boolean) as string[] ?? [];
+    const meta = (file as any).meta as { core?: Record<string, unknown>; fields?: Record<string, unknown> } | null;
+    const existingPeople: string[] = [];
+    if (Array.isArray(meta?.fields?.people)) {
+      for (const p of meta.fields.people as Array<{ name?: string }>) {
+        if (typeof p === 'string') existingPeople.push(p);
+        else if (p?.name) existingPeople.push(p.name);
+      }
+    }
+    const existingTitle = (file as any).title as string | null;
+    const existingDescription = (file as any).description as string | null;
+    const folderName = (file as any).folder?.name as string | null;
+    const adultContent = Array.isArray(meta?.fields?.adult_content) ? meta.fields.adult_content as string[] : [];
+
     // ── Build prompt ──────────────────────────────────────────
     const prompt = buildPrompt({
       tone,
@@ -123,6 +138,12 @@ export async function POST(request: Request) {
       tagCount: parseInt(tagCount, 10) || 8,
       systemContext,
       fileName: file.name,
+      existingPeople,
+      existingTags,
+      existingTitle,
+      existingDescription,
+      folderName,
+      adultContent,
     });
 
     // ── Create tracking job ───────────────────────────────────
@@ -278,6 +299,12 @@ function buildPrompt(opts: {
   tagCount?: number;
   systemContext: string;
   fileName: string;
+  existingPeople?: string[];
+  existingTags?: string[];
+  existingTitle?: string | null;
+  existingDescription?: string | null;
+  folderName?: string | null;
+  adultContent?: string[];
 }): string {
   const parts = [
     'You are analyzing an image to suggest titles for a media archive.',
@@ -288,6 +315,27 @@ function buildPrompt(opts: {
   }
 
   parts.push(`\nThe file is named "${opts.fileName}".`);
+
+  // Feed existing metadata so the AI uses real names and context
+  if (opts.folderName) {
+    parts.push(`This image is in a folder called "${opts.folderName}".`);
+  }
+  if (opts.existingPeople && opts.existingPeople.length > 0) {
+    parts.push(`The people/pets in this image are: ${opts.existingPeople.join(', ')}. USE THEIR ACTUAL NAMES in the titles and descriptions instead of generic terms like "a woman" or "a man".`);
+  }
+  if (opts.existingTags && opts.existingTags.length > 0) {
+    parts.push(`Existing tags on this image: ${opts.existingTags.join(', ')}. Use these as context for what the image contains.`);
+  }
+  if (opts.existingTitle) {
+    parts.push(`The current title is "${opts.existingTitle}" — generate different/better alternatives.`);
+  }
+  if (opts.existingDescription) {
+    parts.push(`The current description is "${opts.existingDescription}" — generate different alternatives.`);
+  }
+  if (opts.adultContent && opts.adultContent.length > 0) {
+    parts.push(`This image is marked as containing: ${opts.adultContent.join(', ')}. Tailor the tone accordingly.`);
+  }
+
   parts.push(`\nGenerate exactly ${opts.count} title suggestions for this image.`);
   parts.push(`Each title should be ${opts.tone} in tone and no longer than ${opts.maxLength} characters.`);
   parts.push('Titles should be concise, descriptive, and suitable for an archive catalog.');
