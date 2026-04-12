@@ -2910,55 +2910,100 @@ function PersonPickerGrid({
   onSelect: (id: string) => void;
   label: string;
 }) {
+  const [search, setSearch] = useState('');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const selected = people.find((p) => p.id === selectedId);
+  const filtered = people.filter((p) =>
+    p.id && (!search || p.name?.toLowerCase().includes(search.toLowerCase())),
+  );
+
   return (
     <div>
       <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-      <div className="grid grid-cols-4 gap-1.5 max-h-32 overflow-y-auto rounded-lg border border-border bg-background p-2">
-        {people.map((p) => {
-          if (!p.id) return null;
-          const isPet = p.entityType === 'PET';
-          const isSelected = selectedId === p.id;
-          return (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => onSelect(p.id!)}
-              className={cn(
-                'flex flex-col items-center gap-1 rounded-lg p-1.5 transition-all',
-                isSelected
-                  ? 'bg-primary/10 ring-2 ring-primary'
-                  : 'hover:bg-accent',
-              )}
-              title={p.name ?? ''}
-            >
-              <div className={cn(
-                'relative flex h-8 w-8 items-center justify-center overflow-hidden',
-                isPet ? 'rounded-lg' : 'rounded-full',
-                !isSelected && 'ring-1 ring-border',
-              )}>
-                {p.avatarUrl ? (
-                  <img src={p.avatarUrl} alt="" className="h-full w-full object-cover" />
-                ) : isPet ? (
-                  <PawPrint className="h-3.5 w-3.5 text-amber-500" />
-                ) : (
-                  <Users className="h-3.5 w-3.5 text-muted-foreground" />
-                )}
-                {isSelected && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-primary/30">
-                    <Check className="h-3.5 w-3.5 text-white drop-shadow" />
-                  </div>
-                )}
+
+      {/* Selected person display */}
+      {selected ? (
+        <button
+          type="button"
+          onClick={() => { setDropdownOpen(true); setSearch(''); }}
+          className="flex w-full items-center gap-2.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-left transition hover:bg-primary/10"
+        >
+          {(() => {
+            const isPet = selected.entityType === 'PET';
+            return selected.avatarUrl ? (
+              <img src={selected.avatarUrl} alt="" className={cn('h-8 w-8 object-cover', isPet ? 'rounded-lg' : 'rounded-full')} />
+            ) : (
+              <div className={cn('flex h-8 w-8 items-center justify-center', isPet ? 'rounded-lg bg-amber-500/10' : 'rounded-full bg-muted')}>
+                {isPet ? <PawPrint className="h-3.5 w-3.5 text-amber-500" /> : <Users className="h-3.5 w-3.5 text-muted-foreground" />}
               </div>
-              <span className="max-w-[4rem] truncate text-[9px] text-muted-foreground">
-                {p.name}
-              </span>
-            </button>
-          );
-        })}
-        {people.length === 0 && (
-          <p className="col-span-4 py-2 text-center text-[11px] text-muted-foreground">No people yet</p>
-        )}
-      </div>
+            );
+          })()}
+          <span className="flex-1 truncate text-sm font-medium">{selected.name}</span>
+          <Pencil className="h-3 w-3 text-muted-foreground" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => { setDropdownOpen(true); setSearch(''); }}
+          className="flex w-full items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground hover:border-primary/30 hover:text-foreground transition"
+        >
+          <Users className="h-4 w-4" />
+          Select person...
+        </button>
+      )}
+
+      {/* Searchable dropdown */}
+      {dropdownOpen && (
+        <div className="relative mt-1">
+          <div className="absolute left-0 right-0 z-30 rounded-lg border border-border bg-popover shadow-xl">
+            <div className="p-2">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search..."
+                className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                autoFocus
+                onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setDropdownOpen(false);
+                }}
+              />
+            </div>
+            <div className="max-h-48 overflow-y-auto px-1 pb-1">
+              {filtered.slice(0, 50).map((p) => {
+                if (!p.id) return null;
+                const isPet = p.entityType === 'PET';
+                const isActive = selectedId === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); onSelect(p.id!); setDropdownOpen(false); }}
+                    className={cn(
+                      'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs transition',
+                      isActive ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-accent',
+                    )}
+                  >
+                    {p.avatarUrl ? (
+                      <img src={p.avatarUrl} alt="" className={cn('h-6 w-6 object-cover', isPet ? 'rounded-md' : 'rounded-full')} />
+                    ) : (
+                      <div className={cn('flex h-6 w-6 items-center justify-center', isPet ? 'rounded-md bg-amber-500/10' : 'rounded-full bg-muted')}>
+                        {isPet ? <PawPrint className="h-3 w-3 text-amber-500" /> : <Users className="h-3 w-3 text-muted-foreground" />}
+                      </div>
+                    )}
+                    <span className="flex-1 truncate">{p.name}</span>
+                    {isPet && <span className="text-[9px] text-amber-500">Pet</span>}
+                    {isActive && <Check className="h-3 w-3 text-primary" />}
+                  </button>
+                );
+              })}
+              {filtered.length === 0 && (
+                <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">No matches</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
