@@ -53,7 +53,7 @@ export function DetailPanel() {
     <aside
       className={cn(
         'flex flex-col border-l border-border bg-card animate-slide-in-right',
-        'fixed inset-y-0 right-0 z-30 w-80 shadow-xl md:relative md:z-auto md:shadow-none',
+        'fixed inset-y-0 right-0 z-30 w-96 shadow-xl md:relative md:z-auto md:shadow-none',
       )}
       role="complementary"
       aria-label="Details"
@@ -619,6 +619,7 @@ function DetailPreviewSurface({
       <ImagePreview
         fileId={file.id}
         alt={(file.meta?.fields?.altText as string | undefined) ?? file.name}
+        mimeType={file.mimeType}
       />
     );
   }
@@ -684,9 +685,13 @@ function formatDetailDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-function ImagePreview({ fileId, alt }: { fileId: string; alt: string }) {
+function ImagePreview({ fileId, alt, mimeType }: { fileId: string; alt: string; mimeType?: string | null }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
+
+  // GIFs need the original file to preserve animation (preview is a static WebP)
+  const isGif = mimeType === 'image/gif';
+  const src = isGif ? `/api/files/${fileId}/stream` : getPreviewUrl(fileId, 'MEDIUM');
 
   return (
     <div className="relative overflow-hidden rounded-lg border border-border bg-muted">
@@ -704,7 +709,7 @@ function ImagePreview({ fileId, alt }: { fileId: string; alt: string }) {
         </div>
       ) : (
         <img
-          src={getPreviewUrl(fileId, 'MEDIUM')}
+          src={src}
           alt={alt}
           className={cn('w-full object-contain transition-opacity duration-200', loaded ? 'opacity-100' : 'opacity-0 absolute inset-0')}
           onLoad={() => setLoaded(true)}

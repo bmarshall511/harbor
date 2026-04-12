@@ -21,9 +21,34 @@ export class IndexingJob {
   private _jobId: string | null = null;
   private _filesProcessed = 0;
   private _foldersProcessed = 0;
+  private _imageCount = 0;
+  private _videoCount = 0;
+  private _audioCount = 0;
+  private _documentCount = 0;
+  private _otherCount = 0;
   private _currentPath = '';
   private _lastProgressUpdate = 0;
   private _cancelled = false;
+  private _deadline = 0; // 0 = no deadline
+  private _interrupted = false;
+
+  /** Set a deadline (epoch ms) after which the job will pause for resumption. */
+  setDeadline(deadlineMs: number): void {
+    this._deadline = deadlineMs;
+  }
+
+  /** Whether the job was interrupted by the deadline (not cancelled). */
+  wasInterrupted(): boolean {
+    return this._interrupted;
+  }
+
+  /** Get current processing stats. */
+  getStats() {
+    return {
+      filesProcessed: this._filesProcessed,
+      foldersProcessed: this._foldersProcessed,
+    };
+  }
 
   async indexArchiveRoot(archiveRootId: string, userId?: string, dropboxCredentials?: { appKey: string; appSecret: string }): Promise<void> {
     const root = await this.rootRepo.findById(archiveRootId);
@@ -39,7 +64,13 @@ export class IndexingJob {
       this._jobId = jobId;
       this._filesProcessed = 0;
       this._foldersProcessed = 0;
+      this._imageCount = 0;
+      this._videoCount = 0;
+      this._audioCount = 0;
+      this._documentCount = 0;
+      this._otherCount = 0;
       this._cancelled = false;
+      this._interrupted = false;
       this._lastProgressUpdate = Date.now();
       await this.jobManager.markRunning(jobId);
 
@@ -66,8 +97,9 @@ export class IndexingJob {
         : (root.rootPath === '/' ? '' : root.rootPath);
       await this.indexDirectory(provider, root.id, root.rootPath, startPath, null, 0);
 
-      // If the user cancelled, stop here — the job is already marked FAILED in the DB.
+      // If cancelled or interrupted by deadline, stop here.
       if (this._cancelled) return;
+      if (this._interrupted) return;
 
       // Ensure folder hierarchy exists for all indexed files.
       // Some providers (Dropbox) may not return explicit folder entries,
@@ -177,8 +209,12 @@ export class IndexingJob {
   ): Promise<void> {
     try {
       for await (const entry of provider.listDirectory(dirPath)) {
-        // Abort early if the job was cancelled by the user
+        // Abort early if cancelled or deadline reached
         if (this._cancelled) return;
+        if (this._deadline > 0 && Date.now() >= this._deadline) {
+          this._interrupted = true;
+          return;
+        }
 
         // Skip entries matching global ignore patterns
         if (this.shouldIgnore(entry.name)) continue;
@@ -258,6 +294,11 @@ export class IndexingJob {
 
             const file = await this.fileRepo.upsertByPath(archiveRootId, normalizedPath, baseFile);
             this._filesProcessed++;
+            if (mimeType?.startsWith('image/')) this._imageCount++;
+            else if (mimeType?.startsWith('video/')) this._videoCount++;
+            else if (mimeType?.startsWith('audio/')) this._audioCount++;
+            else if (mimeType?.startsWith('text/') || mimeType === 'application/pdf') this._documentCount++;
+            else this._otherCount++;
             this._currentPath = normalizedPath;
             await this._reportProgress();
 
@@ -331,6 +372,11 @@ export class IndexingJob {
     await this.jobManager.updateProgress(this._jobId, 0, {
       filesProcessed: this._filesProcessed,
       foldersProcessed: this._foldersProcessed,
+      images: this._imageCount,
+      videos: this._videoCount,
+      audio: this._audioCount,
+      documents: this._documentCount,
+      other: this._otherCount,
       currentPath: this._currentPath,
     }).catch(() => {});
   }

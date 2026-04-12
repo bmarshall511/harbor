@@ -1,33 +1,61 @@
 'use client';
 
 /**
- * AiSuggestButton — sparkle icon button that triggers AI content
- * generation and shows results in a popover.
+ * AiSuggestButton — triggers AI content generation for an image file.
  *
- * Designed to sit next to form fields (title, description, tags).
- * Reusable across different AI suggestion types.
- *
- * States: idle → loading → results (or error)
+ * Opens a dialog with: confirm step (cost/time estimates from actual
+ * past runs, tone selector) → loading → results (titles, description,
+ * tags) → pick a title to apply all content.
  */
 
 import { useState } from 'react';
-import * as Popover from '@radix-ui/react-popover';
-import { Sparkles, Loader2, AlertTriangle, RefreshCw, X } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import * as Dialog from '@radix-ui/react-dialog';
+import { Sparkles, Loader2, AlertTriangle, RefreshCw, X, Check } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
-interface AiSuggestButtonProps {
-  /** The file ID to analyze. */
-  fileId: string;
-  /** Which field is being suggested. */
-  field: 'title' | 'description' | 'tags';
-  /** Called when the user picks a suggestion. */
-  onSelect: (value: string) => void;
-  /** Whether AI features are enabled (hides the button if false). */
-  enabled?: boolean;
-}
+const TONE_OPTIONS = [
+  { value: '', label: 'Default (from settings)', group: '' },
+  { value: 'descriptive', label: 'Descriptive', group: 'Standard' },
+  { value: 'professional', label: 'Professional', group: 'Standard' },
+  { value: 'casual', label: 'Casual', group: 'Standard' },
+  { value: 'minimal', label: 'Minimal', group: 'Standard' },
+  { value: 'technical', label: 'Technical', group: 'Standard' },
+  { value: 'journalistic', label: 'Journalistic', group: 'Standard' },
+  { value: 'creative', label: 'Creative', group: 'Creative' },
+  { value: 'poetic', label: 'Poetic', group: 'Creative' },
+  { value: 'dramatic', label: 'Dramatic', group: 'Creative' },
+  { value: 'nostalgic', label: 'Nostalgic', group: 'Creative' },
+  { value: 'cinematic', label: 'Cinematic', group: 'Creative' },
+  { value: 'whimsical', label: 'Whimsical', group: 'Creative' },
+  { value: 'mysterious', label: 'Mysterious', group: 'Creative' },
+  { value: 'romantic', label: 'Romantic', group: 'Creative' },
+  { value: 'humorous', label: 'Humorous', group: 'Fun' },
+  { value: 'sarcastic', label: 'Sarcastic', group: 'Fun' },
+  { value: 'clickbait', label: 'Clickbait', group: 'Fun' },
+  { value: 'roast', label: 'Roast', group: 'Fun' },
+  { value: 'meme', label: 'Meme-style', group: 'Fun' },
+  { value: 'deadpan', label: 'Deadpan', group: 'Fun' },
+  { value: 'sensual', label: 'Sensual', group: 'Intimate' },
+  { value: 'alluring', label: 'Alluring', group: 'Intimate' },
+  { value: 'intimate', label: 'Intimate', group: 'Intimate' },
+  { value: 'bold-artistic', label: 'Bold Artistic', group: 'Intimate' },
+  { value: 'provocative', label: 'Provocative', group: 'Intimate' },
+  { value: 'seductive', label: 'Seductive', group: 'Intimate' },
+  { value: 'risque', label: 'Risqué', group: 'Intimate' },
+  { value: 'boudoir', label: 'Boudoir', group: 'Intimate' },
+  { value: 'dark', label: 'Dark', group: 'Mood' },
+  { value: 'uplifting', label: 'Uplifting', group: 'Mood' },
+  { value: 'melancholic', label: 'Melancholic', group: 'Mood' },
+  { value: 'ethereal', label: 'Ethereal', group: 'Mood' },
+  { value: 'edgy', label: 'Edgy', group: 'Mood' },
+  { value: 'serene', label: 'Serene', group: 'Mood' },
+];
 
 interface SuggestResponse {
   suggestions: string[];
+  description: string | null;
+  tags: string[];
   jobId: string;
   tokens: { input: number; output: number };
   cost: number;
@@ -35,17 +63,37 @@ interface SuggestResponse {
   provider: string;
 }
 
-const ENDPOINT_MAP: Record<string, string> = {
-  title: '/api/ai/suggest-title',
-  description: '/api/ai/suggest-description',
-  tags: '/api/ai/suggest-tags',
-};
+interface AiSuggestButtonProps {
+  fileId: string;
+  onSelectTitle: (value: string) => void;
+  onSelectDescription?: (value: string) => void;
+  onSelectTags?: (tags: string[]) => void;
+  enabled?: boolean;
+}
 
-export function AiSuggestButton({ fileId, field, onSelect, enabled = true }: AiSuggestButtonProps) {
+export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, onSelectTags, enabled = true }: AiSuggestButtonProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<SuggestResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [toneOverride, setToneOverride] = useState('');
+
+  // Fetch actual cost/time from past AI jobs for the estimate
+  const { data: usageStats } = useQuery({
+    queryKey: ['ai-usage-estimate'],
+    queryFn: async () => {
+      const res = await fetch('/api/admin/ai-usage');
+      if (!res.ok) return null;
+      const data = await res.json();
+      const titleJobs = (data.recent ?? []).filter((j: any) => j.purpose === 'title_generation' && j.cost > 0);
+      if (titleJobs.length === 0) return null;
+      const avgCost = titleJobs.reduce((s: number, j: any) => s + (j.cost ?? 0), 0) / titleJobs.length;
+      const avgTime = titleJobs.reduce((s: number, j: any) => s + (j.elapsedMs ?? 0), 0) / titleJobs.length;
+      return { avgCost, avgTime, count: titleJobs.length };
+    },
+    staleTime: 60_000,
+    enabled: open,
+  });
 
   const fetchSuggestions = async () => {
     setLoading(true);
@@ -53,20 +101,21 @@ export function AiSuggestButton({ fileId, field, onSelect, enabled = true }: AiS
     setData(null);
 
     try {
-      const res = await fetch(ENDPOINT_MAP[field], {
+      const res = await fetch('/api/ai/suggest-title', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileId }),
+        body: JSON.stringify({ fileId, ...(toneOverride ? { tone: toneOverride } : {}) }),
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: `Request failed (${res.status})` }));
-        throw new Error(err.message || `Request failed (${res.status})`);
+        const err = await res.json().catch(() => ({ message: 'Something went wrong. Check AI settings.' }));
+        if (err.debug) console.warn('[AI Suggest] Debug:', err.debug);
+        throw new Error(err.message || 'Something went wrong. Check AI settings.');
       }
 
       const result = await res.json() as SuggestResponse;
       if (!result.suggestions?.length) {
-        throw new Error('No suggestions returned. Try again.');
+        throw new Error('No suggestions returned. Try a different tone or check your API key.');
       }
       setData(result);
     } catch (err) {
@@ -76,77 +125,131 @@ export function AiSuggestButton({ fileId, field, onSelect, enabled = true }: AiS
     }
   };
 
-  const handleOpen = (isOpen: boolean) => {
-    setOpen(isOpen);
-    if (isOpen && !data && !loading) {
-      fetchSuggestions();
-    }
+  const handleSelect = (title: string) => {
+    onSelectTitle(title);
+    if (data?.description && onSelectDescription) onSelectDescription(data.description);
+    if (data?.tags?.length && onSelectTags) onSelectTags(data.tags);
+    setOpen(false);
   };
 
-  const handleSelect = (value: string) => {
-    onSelect(value);
+  const handleClose = () => {
     setOpen(false);
+    setData(null);
+    setError(null);
+    setToneOverride('');
   };
 
   if (!enabled) return null;
 
   return (
-    <Popover.Root open={open} onOpenChange={handleOpen}>
-      <Popover.Trigger asChild>
+    <Dialog.Root open={open} onOpenChange={(o) => o ? setOpen(true) : handleClose()}>
+      <Dialog.Trigger asChild>
         <button
           type="button"
           className={cn(
-            'flex items-center justify-center rounded-md p-1 transition-colors',
-            'text-muted-foreground hover:text-primary hover:bg-primary/10',
-            open && 'text-primary bg-primary/10',
+            'flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors',
+            'border-primary/30 text-primary hover:bg-primary/10',
           )}
-          title={`Suggest ${field} with AI`}
-          aria-label={`AI ${field} suggestions`}
+          title="AI content suggestions"
         >
-          <Sparkles className="h-3.5 w-3.5" />
+          <Sparkles className="h-3 w-3" />
+          <span>AI</span>
         </button>
-      </Popover.Trigger>
+      </Dialog.Trigger>
 
-      <Popover.Portal>
-        <Popover.Content
-          align="end"
-          sideOffset={6}
-          className="z-50 w-72 rounded-xl border border-border bg-popover shadow-2xl animate-in fade-in-0 zoom-in-95"
-        >
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 animate-in fade-in-0" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-popover shadow-2xl animate-in fade-in-0 zoom-in-95">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              <span className="text-xs font-semibold">AI {field} suggestions</span>
+          <div className="flex items-center justify-between border-b border-border px-5 py-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              <Dialog.Title className="text-sm font-semibold">AI Content Generation</Dialog.Title>
             </div>
-            <Popover.Close className="rounded-md p-0.5 text-muted-foreground hover:text-foreground">
-              <X className="h-3.5 w-3.5" />
-            </Popover.Close>
+            <Dialog.Close className="rounded-md p-1 text-muted-foreground hover:text-foreground">
+              <X className="h-4 w-4" />
+            </Dialog.Close>
           </div>
 
-          {/* Content */}
-          <div className="p-2">
-            {/* Loading state */}
-            {loading && (
-              <div className="flex flex-col items-center gap-2 py-6">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                <p className="text-xs text-muted-foreground">Analyzing image...</p>
+          {/* Body */}
+          <div className="px-5 py-4">
+            {/* Confirm step */}
+            {!loading && !data && !error && (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  AI will analyze this image and generate title suggestions, a description, and tags in a single request.
+                </p>
+
+                {/* Tone selector */}
+                <div className="flex items-center gap-3">
+                  <label className="text-xs font-medium text-muted-foreground shrink-0">Tone:</label>
+                  <select
+                    value={toneOverride}
+                    onChange={(e) => setToneOverride(e.target.value)}
+                    className="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <option value="">Default (from settings)</option>
+                    {(() => {
+                      const groups = [...new Set(TONE_OPTIONS.filter((t) => t.group).map((t) => t.group))];
+                      return groups.map((group) => (
+                        <optgroup key={group} label={group}>
+                          {TONE_OPTIONS.filter((t) => t.group === group).map((t) => (
+                            <option key={t.value} value={t.value}>{t.label}</option>
+                          ))}
+                        </optgroup>
+                      ));
+                    })()}
+                  </select>
+                </div>
+
+                {/* Cost/time estimate from actuals */}
+                <div className="rounded-lg bg-muted/50 px-4 py-3 text-xs text-muted-foreground space-y-1">
+                  {usageStats ? (
+                    <>
+                      <p>Avg cost: <span className="font-medium text-foreground">${usageStats.avgCost.toFixed(4)}</span> per image <span className="text-muted-foreground/60">(based on {usageStats.count} past runs)</span></p>
+                      <p>Avg time: <span className="font-medium text-foreground">{(usageStats.avgTime / 1000).toFixed(1)}s</span></p>
+                    </>
+                  ) : (
+                    <>
+                      <p>Estimated cost: ~$0.005–0.02 per image</p>
+                      <p>Estimated time: 3–8 seconds</p>
+                      <p className="text-muted-foreground/60 italic">Estimates will be based on actual runs after your first request.</p>
+                    </>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={fetchSuggestions}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Generate
+                </button>
               </div>
             )}
 
-            {/* Error state */}
+            {/* Loading */}
+            {loading && (
+              <div className="flex flex-col items-center gap-3 py-10">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">Analyzing image...</p>
+              </div>
+            )}
+
+            {/* Error */}
             {error && !loading && (
-              <div className="space-y-2 py-2">
-                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
-                  <p className="text-xs text-destructive break-words">{error}</p>
+              <div className="space-y-3">
+                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  <p className="text-sm text-destructive">{error}</p>
                 </div>
                 <button
                   type="button"
                   onClick={fetchSuggestions}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition"
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition"
                 >
-                  <RefreshCw className="h-3 w-3" />
+                  <RefreshCw className="h-3.5 w-3.5" />
                   Try again
                 </button>
               </div>
@@ -154,39 +257,70 @@ export function AiSuggestButton({ fileId, field, onSelect, enabled = true }: AiS
 
             {/* Results */}
             {data && !loading && (
-              <div className="space-y-1">
-                {data.suggestions.map((suggestion, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => handleSelect(suggestion)}
-                    className="flex w-full items-start rounded-lg px-3 py-2 text-left text-xs transition hover:bg-accent"
-                  >
-                    <span className="leading-relaxed">{suggestion}</span>
-                  </button>
-                ))}
+              <div className="space-y-4">
+                {/* Title suggestions */}
+                <div>
+                  <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Titles — click to select</p>
+                  <div className="space-y-1">
+                    {data.suggestions.map((title, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => handleSelect(title)}
+                        className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm transition hover:border-primary/30 hover:bg-primary/5"
+                      >
+                        <span className="flex-1">{title}</span>
+                        <Check className="h-3.5 w-3.5 text-muted-foreground/30" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Description */}
+                {data.description && (
+                  <div>
+                    <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">Description</p>
+                    <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs leading-relaxed text-muted-foreground">{data.description}</p>
+                  </div>
+                )}
+
+                {/* Tags */}
+                {data.tags.length > 0 && (
+                  <div>
+                    <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">Tags</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {data.tags.map((tag, i) => (
+                        <span key={i} className="rounded-full border border-border bg-muted/30 px-2.5 py-0.5 text-[11px]">{tag}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-[10px] text-muted-foreground/60 italic">
+                  Clicking a title also applies the description and tags above.
+                </p>
               </div>
             )}
           </div>
 
           {/* Footer */}
           {data && !loading && (
-            <div className="flex items-center justify-between border-t border-border px-3 py-2">
-              <span className="text-[10px] tabular-nums text-muted-foreground">
-                ~${data.cost.toFixed(4)} · {data.tokens.input + data.tokens.output} tokens · {data.model}
+            <div className="flex items-center justify-between border-t border-border px-5 py-3">
+              <span className="text-[11px] tabular-nums text-muted-foreground">
+                ${data.cost.toFixed(4)} · {data.tokens.input + data.tokens.output} tokens · {data.model}
               </span>
               <button
                 type="button"
                 onClick={fetchSuggestions}
-                className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 transition"
+                className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition"
               >
-                <RefreshCw className="h-2.5 w-2.5" />
+                <RefreshCw className="h-3 w-3" />
                 Regenerate
               </button>
             </div>
           )}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

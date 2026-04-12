@@ -11,6 +11,7 @@ const ALLOWED_SECRETS = [
   'dropbox.appSecret',
   'openai.apiKey',
   'anthropic.apiKey',
+  'gemini.apiKey',
 ];
 
 /**

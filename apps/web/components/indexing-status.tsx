@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Loader2, X, Square } from 'lucide-react';
+import { Check, Loader2, X, Square, Image, Video, FileText, Folder } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 interface Job {
@@ -163,17 +163,28 @@ export function IndexingStatus() {
   // ── Active job indicator ───────────────────────────────────────
   const label = JOB_LABELS[activeJob.type] ?? activeJob.type;
   const meta = activeJob.metadata;
-  const filesCount = meta?.filesProcessed ?? 0;
-  const foldersCount = meta?.foldersProcessed ?? 0;
+  const images = (meta?.images as number) ?? 0;
+  const videos = (meta?.videos as number) ?? 0;
+  const docs = (meta?.documents as number) ?? 0;
+  const folders = (meta?.foldersProcessed as number) ?? 0;
+  const totalFiles = (meta?.filesProcessed as number) ?? 0;
   const remaining = activeJobs.length - 1;
+
+  // Build a concise breakdown string
+  const parts: string[] = [];
+  if (images > 0) parts.push(`${images} img`);
+  if (videos > 0) parts.push(`${videos} vid`);
+  if (docs > 0) parts.push(`${docs} doc`);
+  if (folders > 0) parts.push(`${folders} dir`);
+  const otherCount = totalFiles - images - videos - docs;
+  if (otherCount > 0) parts.push(`${otherCount} other`);
+  const breakdown = parts.length > 0 ? parts.join(' · ') : `${totalFiles} files`;
 
   return (
     <div className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]">
       <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
       <span className="font-semibold text-foreground">{label}</span>
-      <span className="tabular-nums text-muted-foreground">
-        {filesCount.toLocaleString()}f · {foldersCount.toLocaleString()}d
-      </span>
+      <span className="tabular-nums text-muted-foreground">{breakdown}</span>
       <span className="tabular-nums text-muted-foreground/60">{elapsedStr}</span>
       {remaining > 0 && (
         <span className="text-muted-foreground/60">+{remaining}</span>

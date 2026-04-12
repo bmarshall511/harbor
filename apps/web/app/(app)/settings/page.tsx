@@ -2030,12 +2030,14 @@ function AiSettingsSection() {
             >
               <option value="openai">OpenAI</option>
               <option value="anthropic">Anthropic</option>
+              <option value="gemini">Google Gemini</option>
             </select>
           </div>
         </div>
 
         <SecretField label="OpenAI API Key" description="Powers OCR, image analysis, transcription (Whisper), and text embeddings." secretKey="openai.apiKey" isSet={secretStatus?.['openai.apiKey'] ?? false} helpUrl="https://platform.openai.com/api-keys" helpText="Get API key" />
         <SecretField label="Anthropic API Key" description="Powers auto-tagging, title generation, descriptions, and summarization." secretKey="anthropic.apiKey" isSet={secretStatus?.['anthropic.apiKey'] ?? false} helpUrl="https://console.anthropic.com/settings/keys" helpText="Get API key" />
+        <SecretField label="Google Gemini API Key" description="Powers title generation, descriptions, and tags via Gemini vision." secretKey="gemini.apiKey" isSet={secretStatus?.['gemini.apiKey'] ?? false} helpUrl="https://aistudio.google.com/app/apikey" helpText="Get API key" />
 
         <FaceDetectionControls
           aiEnabled={aiEnabled}
@@ -2067,6 +2069,10 @@ function AiSettingsSection() {
                   <optgroup label="Anthropic">
                     <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (~$0.01/image)</option>
                   </optgroup>
+                  <optgroup label="Google Gemini">
+                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (fast, ~$0.001/image)</option>
+                    <option value="gemini-1.5-pro">Gemini 1.5 Pro (~$0.005/image)</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -2077,11 +2083,50 @@ function AiSettingsSection() {
                   onChange={(e) => saveMutation.mutate({ 'ai.title.tone': e.target.value })}
                   className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
                 >
-                  <option value="descriptive">Descriptive</option>
-                  <option value="professional">Professional</option>
-                  <option value="casual">Casual</option>
-                  <option value="minimal">Minimal</option>
-                  <option value="creative">Creative</option>
+                  <optgroup label="Standard">
+                    <option value="descriptive">Descriptive</option>
+                    <option value="professional">Professional</option>
+                    <option value="casual">Casual</option>
+                    <option value="minimal">Minimal</option>
+                    <option value="technical">Technical</option>
+                    <option value="journalistic">Journalistic</option>
+                  </optgroup>
+                  <optgroup label="Creative">
+                    <option value="creative">Creative</option>
+                    <option value="poetic">Poetic</option>
+                    <option value="dramatic">Dramatic</option>
+                    <option value="nostalgic">Nostalgic</option>
+                    <option value="cinematic">Cinematic</option>
+                    <option value="whimsical">Whimsical</option>
+                    <option value="mysterious">Mysterious</option>
+                    <option value="romantic">Romantic</option>
+                  </optgroup>
+                  <optgroup label="Fun">
+                    <option value="humorous">Humorous</option>
+                    <option value="sarcastic">Sarcastic</option>
+                    <option value="clickbait">Clickbait</option>
+                    <option value="roast">Roast</option>
+                    <option value="meme">Meme-style</option>
+                    <option value="deadpan">Deadpan</option>
+                  </optgroup>
+                  <optgroup label="Intimate">
+                    <option value="sensual">Sensual</option>
+                    <option value="alluring">Alluring</option>
+                    <option value="intimate">Intimate</option>
+                    <option value="bold-artistic">Bold Artistic</option>
+                    <option value="provocative">Provocative</option>
+                    <option value="seductive">Seductive</option>
+                    <option value="risque">Risqué</option>
+                    <option value="boudoir">Boudoir</option>
+                  </optgroup>
+                  <optgroup label="Mood">
+                    <option value="dark">Dark</option>
+                    <option value="uplifting">Uplifting</option>
+                    <option value="melancholic">Melancholic</option>
+                    <option value="ethereal">Ethereal</option>
+                    <option value="edgy">Edgy</option>
+                    <option value="serene">Serene</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -2105,6 +2150,30 @@ function AiSettingsSection() {
                   max={6}
                   value={settings?.['ai.title.suggestionCount'] ?? '4'}
                   onChange={(e) => saveMutation.mutate({ 'ai.title.suggestionCount': e.target.value })}
+                  className="w-20 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">Max description length</label>
+                <input
+                  type="number"
+                  min={50}
+                  max={500}
+                  value={settings?.['ai.description.maxLength'] ?? '200'}
+                  onChange={(e) => saveMutation.mutate({ 'ai.description.maxLength': e.target.value })}
+                  className="w-20 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">Tags per request</label>
+                <input
+                  type="number"
+                  min={3}
+                  max={20}
+                  value={settings?.['ai.tags.count'] ?? '8'}
+                  onChange={(e) => saveMutation.mutate({ 'ai.tags.count': e.target.value })}
                   className="w-20 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring"
                 />
               </div>

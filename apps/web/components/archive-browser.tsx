@@ -328,22 +328,30 @@ function ArchiveEmptyState({ archiveRootId, isRootLevel }: { archiveRootId: stri
 
   const handleReindex = () => {
     setReindexing(true);
-    // Fire the request but don't await — it runs synchronously on the
-    // server for up to 120s. The IndexingStatus component polls for
-    // progress. We just need to know the request was accepted.
-    fetch('/api/indexing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ archiveRootId }),
-    }).then((res) => {
-      if (!res.ok) res.json().then((d) => toast.error(d.message ?? 'Failed'));
-    }).catch(() => {
-      toast.error('Failed to start indexing');
-    });
+    // Fire indexing — auto-retries when the server returns continue:true
+    // (Vercel functions time out at 120s, so large archives need multiple chunks)
+    const runChunk = () => {
+      fetch('/api/indexing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archiveRootId }),
+      }).then(async (res) => {
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          toast.error(d.message ?? 'Indexing failed');
+          return;
+        }
+        const data = await res.json();
+        if (data.continue) {
+          // Server timed out but has more to process — auto-continue
+          runChunk();
+        }
+      }).catch(() => {
+        toast.error('Failed to start indexing');
+      });
+    };
+    runChunk();
     toast.success('Indexing started — progress will appear in the header');
-    // The reindexing state will be cleared when the jobs poll picks
-    // up the RUNNING status and the archive-browser shows its own
-    // indexing state.
     setTimeout(() => setReindexing(false), 3000);
   };
 

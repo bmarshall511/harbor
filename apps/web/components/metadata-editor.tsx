@@ -110,24 +110,44 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Details</h4>
-        {editing ? (
-          <div className="flex gap-1">
-            <button onClick={handleSave} disabled={mutation.isPending}
-              className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
-              <Save className="h-3 w-3" />
-              {mutation.isPending ? 'Saving...' : 'Save'}
+        <div className="flex items-center gap-1">
+          {file.mimeType?.startsWith('image/') && (
+            <AiSuggestButton
+              fileId={file.id}
+              onSelectTitle={(v) => {
+                setFormData((prev) => ({ ...prev, title: v }));
+                setEditing(true);
+              }}
+              onSelectDescription={(v) => {
+                setFormData((prev) => ({ ...prev, description: v }));
+                setEditing(true);
+              }}
+              onSelectTags={(tags) => {
+                // Tags will be saved when the form is submitted
+                setFormData((prev) => ({ ...prev, tags }));
+                setEditing(true);
+              }}
+            />
+          )}
+          {editing ? (
+            <>
+              <button onClick={handleSave} disabled={mutation.isPending}
+                className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                <Save className="h-3 w-3" />
+                {mutation.isPending ? 'Saving...' : 'Save'}
+              </button>
+              <button onClick={() => setEditing(false)}
+                className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent">
+                <X className="h-3 w-3" />
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setEditing(true)}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
+              <Pencil className="h-3 w-3" /> Edit
             </button>
-            <button onClick={() => setEditing(false)}
-              className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent">
-              <X className="h-3 w-3" />
-            </button>
-          </div>
-        ) : (
-          <button onClick={() => setEditing(true)}
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
-            <Pencil className="h-3 w-3" /> Edit
-          </button>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Render all fields from templates in order */}
@@ -158,18 +178,10 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
           // Text / textarea fields
           const value = getFieldValue(field.key);
           if (editing) {
-            const isAiEligible = field.key === 'title' && file.mimeType?.startsWith('image/');
             return (
               <EditField key={field.key} label={field.name}
                 value={formData[field.key] ?? ''} onChange={(v) => setField(field.key, v)}
                 multiline={field.fieldType === 'textarea'}
-                aiButton={isAiEligible ? (
-                  <AiSuggestButton
-                    fileId={file.id}
-                    field="title"
-                    onSelect={(v) => setField(field.key, v)}
-                  />
-                ) : undefined}
               />
             );
           }

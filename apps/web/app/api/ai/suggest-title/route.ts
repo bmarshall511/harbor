@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const { fileId } = await request.json();
+    const { fileId, tone: toneOverride } = await request.json();
     if (!fileId) return NextResponse.json({ message: 'fileId is required' }, { status: 400 });
 
     // ── Check AI is enabled ───────────────────────────────────
@@ -46,15 +46,20 @@ export async function POST(request: Request) {
 
     // ── Load settings ─────────────────────────────────────────
     const model = await getSetting('ai.defaultModel');
-    const tone = await getSetting('ai.title.tone');
+    const tone = toneOverride || await getSetting('ai.title.tone');
     const maxLength = await getSetting('ai.title.maxLength');
     const suggestionCount = await getSetting('ai.title.suggestionCount');
     const systemContext = await getSetting('ai.title.systemContext');
 
+    const descMaxLength = await getSetting('ai.description.maxLength');
+    const tagCount = await getSetting('ai.tags.count');
+
     // ── Determine provider from model ─────────────────────────
     const isAnthropic = model.startsWith('claude');
-    const provider = isAnthropic ? 'anthropic' : 'openai';
-    const apiKey = await getSecret(isAnthropic ? 'anthropic.apiKey' : 'openai.apiKey');
+    const isGemini = model.startsWith('gemini');
+    const provider = isGemini ? 'gemini' : isAnthropic ? 'anthropic' : 'openai';
+    const secretKey = isGemini ? 'gemini.apiKey' : isAnthropic ? 'anthropic.apiKey' : 'openai.apiKey';
+    const apiKey = await getSecret(secretKey);
 
     if (!apiKey) {
       return NextResponse.json({
@@ -76,15 +81,29 @@ export async function POST(request: Request) {
         return NextResponse.json({ message: 'Could not read image file from disk.' }, { status: 404 });
       }
     } else {
-      // Dropbox: try offline cache
+      // Dropbox: try offline cache first, then download via API
       const cacheDir = await getSetting('preview.cacheDir');
       const cachePath = path.join(cacheDir, 'offline', fileId);
       try {
         imageBuffer = Buffer.from(await fs.readFile(cachePath));
       } catch {
-        return NextResponse.json({
-          message: 'Image not available offline. Make it available offline first, then try again.',
-        }, { status: 400 });
+        // Not cached — auto-download via the cache endpoint
+        try {
+          const cacheRes = await fetch(new URL(`/api/files/${fileId}/cache`, request.url), {
+            method: 'POST',
+            headers: { cookie: request.headers.get('cookie') ?? '' },
+          });
+          if (cacheRes.ok) {
+            // Try reading again after caching
+            imageBuffer = Buffer.from(await fs.readFile(cachePath));
+          }
+        } catch { /* fall through */ }
+
+        if (!imageBuffer) {
+          return NextResponse.json({
+            message: 'Could not download image from Dropbox. Try making it available offline first.',
+          }, { status: 400 });
+        }
       }
     }
 
@@ -100,6 +119,8 @@ export async function POST(request: Request) {
       tone,
       maxLength: parseInt(maxLength, 10) || 80,
       count: parseInt(suggestionCount, 10) || 4,
+      descMaxLength: parseInt(descMaxLength, 10) || 200,
+      tagCount: parseInt(tagCount, 10) || 8,
       systemContext,
       fileName: file.name,
     });
@@ -124,33 +145,44 @@ export async function POST(request: Request) {
       'gpt-4o': { input: 2.5, output: 10 },
       'gpt-4o-mini': { input: 0.15, output: 0.6 },
       'claude-sonnet-4-20250514': { input: 3, output: 15 },
+      'gemini-2.0-flash': { input: 0.1, output: 0.4 },
+      'gemini-1.5-pro': { input: 1.25, output: 5 },
     };
     const rates = costTable[model] ?? { input: 2.5, output: 10 };
 
     // ── Call AI provider ──────────────────────────────────────
     let suggestions: string[] = [];
+    let parsedDescription: string | null = null;
+    let parsedTags: string[] = [];
     let inputTokens = 0;
     let outputTokens = 0;
 
     try {
-      if (isAnthropic) {
-        const result = await callAnthropic(apiKey, model, prompt, dataUrl, file.mimeType!);
-        suggestions = result.suggestions;
-        inputTokens = result.inputTokens;
-        outputTokens = result.outputTokens;
+      let result;
+      if (isGemini) {
+        result = await callGemini(apiKey, model, prompt, dataUrl, file.mimeType!);
+      } else if (isAnthropic) {
+        result = await callAnthropic(apiKey, model, prompt, dataUrl, file.mimeType!);
       } else {
-        const result = await callOpenAI(apiKey, model, prompt, dataUrl);
-        suggestions = result.suggestions;
-        inputTokens = result.inputTokens;
-        outputTokens = result.outputTokens;
+        result = await callOpenAI(apiKey, model, prompt, dataUrl);
       }
+      suggestions = result.suggestions;
+      parsedDescription = result.description ?? null;
+      parsedTags = result.tags ?? [];
+      inputTokens = result.inputTokens;
+      outputTokens = result.outputTokens;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'AI provider error';
+      const technicalError = err instanceof Error ? err.message : 'AI provider error';
+      console.error(`[AI/SuggestTitle] Provider error for file ${fileId}:`, technicalError);
       await db.aiJob.update({
         where: { id: jobId },
-        data: { status: 'FAILED', error: message, completedAt: new Date() },
+        data: { status: 'FAILED', error: technicalError, completedAt: new Date() },
       }).catch(() => {});
-      return NextResponse.json({ message: `AI error: ${message}` }, { status: 502 });
+      // User-friendly message — don't expose technical details
+      return NextResponse.json({
+        message: 'Could not generate suggestions. The AI provider returned an error. Try a different tone or check your API key in Settings.',
+        debug: technicalError, // Included for admin debugging via browser devtools
+      }, { status: 502 });
     }
 
     // ── Record completion ─────────────────────────────────────
@@ -174,6 +206,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       suggestions,
+      description: suggestions.length > 0 ? (parsedDescription ?? null) : null,
+      tags: suggestions.length > 0 ? (parsedTags ?? []) : [],
       jobId,
       tokens: { input: inputTokens, output: outputTokens },
       cost,
@@ -188,12 +222,50 @@ export async function POST(request: Request) {
   }
 }
 
+// ─── Response Parser ─────────────────────────────────────────────────────────
+
+/**
+ * Robustly parse AI title suggestions from various response formats.
+ * Handles: JSON {"titles": [...]}, JSON arrays [...], numbered lists,
+ * bullet lists, and plain text lines. Falls back gracefully when the
+ * model returns natural language instead of JSON.
+ */
+function parseAiResponse(raw: string): { titles: string[]; description: string | null; tags: string[] } {
+  const cleaned = raw.trim();
+
+  // Try JSON parsing first
+  try {
+    // Handle markdown code blocks
+    let json = cleaned;
+    if (json.startsWith('```')) {
+      json = json.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    }
+    const parsed = JSON.parse(json);
+    if (Array.isArray(parsed)) return { titles: parsed.filter((t): t is string => typeof t === 'string' && t.trim().length > 0), description: null, tags: [] };
+    const titles = (parsed.titles ?? parsed.suggestions ?? []).filter((t: unknown): t is string => typeof t === 'string' && t.trim().length > 0);
+    const description = typeof parsed.description === 'string' ? parsed.description : null;
+    const tags = Array.isArray(parsed.tags) ? parsed.tags.filter((t: unknown): t is string => typeof t === 'string') : [];
+    if (titles.length > 0) return { titles, description, tags };
+  } catch { /* not JSON, try other formats */ }
+
+  // Try line-by-line extraction (numbered lists, bullet lists)
+  const lines = cleaned.split('\n')
+    .map((l) => l.replace(/^\s*[-•*]\s*/, '').replace(/^\s*\d+[.)]\s*/, '').replace(/^["']|["']$/g, '').trim())
+    .filter((l) => l.length > 3 && l.length < 200 && !l.startsWith('{') && !l.startsWith('I '));
+
+  if (lines.length >= 2) return { titles: lines, description: null, tags: [] };
+
+  return { titles: [], description: null, tags: [] };
+}
+
 // ─── Prompt Builder ──────────────────────────────────────────────────────────
 
 function buildPrompt(opts: {
   tone: string;
   maxLength: number;
   count: number;
+  descMaxLength?: number;
+  tagCount?: number;
   systemContext: string;
   fileName: string;
 }): string {
@@ -209,8 +281,12 @@ function buildPrompt(opts: {
   parts.push(`\nGenerate exactly ${opts.count} title suggestions for this image.`);
   parts.push(`Each title should be ${opts.tone} in tone and no longer than ${opts.maxLength} characters.`);
   parts.push('Titles should be concise, descriptive, and suitable for an archive catalog.');
+  parts.push('All titles MUST be in Title Case (capitalize the first letter of each major word).');
   parts.push('Do NOT include quotes around the titles.');
-  parts.push('\nReturn ONLY a valid JSON object with a single key "titles" containing an array of strings. No other text.');
+  parts.push('\nAlso generate:');
+  parts.push(`- A description of the image (2-3 sentences, same tone, max ${opts.descMaxLength ?? 200} characters)`);
+  parts.push(`- ${opts.tagCount ?? 8} descriptive tags in Title Case (capitalize each word)`);
+  parts.push('\nReturn ONLY a valid JSON object with keys: "titles" (array of strings), "description" (string), "tags" (array of strings). No other text.');
 
   return parts.join('\n');
 }
@@ -222,7 +298,7 @@ async function callOpenAI(
   model: string,
   prompt: string,
   dataUrl: string,
-): Promise<{ suggestions: string[]; inputTokens: number; outputTokens: number }> {
+): Promise<{ suggestions: string[]; description: string | null; tags: string[]; inputTokens: number; outputTokens: number }> {
   const res = await globalThis.fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -256,13 +332,12 @@ async function callOpenAI(
   };
 
   const raw = response.choices[0]?.message?.content ?? '{}';
-  const parsed = JSON.parse(raw);
-  const suggestions = Array.isArray(parsed.titles)
-    ? parsed.titles.filter((t: unknown): t is string => typeof t === 'string')
-    : [];
+  const aiResult = parseAiResponse(raw);
 
   return {
-    suggestions,
+    suggestions: aiResult.titles,
+    description: aiResult.description,
+    tags: aiResult.tags,
     inputTokens: response.usage?.prompt_tokens ?? 0,
     outputTokens: response.usage?.completion_tokens ?? 0,
   };
@@ -276,7 +351,7 @@ async function callAnthropic(
   prompt: string,
   dataUrl: string,
   mimeType: string,
-): Promise<{ suggestions: string[]; inputTokens: number; outputTokens: number }> {
+): Promise<{ suggestions: string[]; description: string | null; tags: string[]; inputTokens: number; outputTokens: number }> {
   const base64 = dataUrl.split(',')[1];
   const mediaType = mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
 
@@ -321,14 +396,68 @@ async function callAnthropic(
     jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   }
 
-  const parsed = JSON.parse(jsonStr);
-  const suggestions = Array.isArray(parsed.titles)
-    ? parsed.titles.filter((t: unknown): t is string => typeof t === 'string')
-    : [];
+  const aiResult = parseAiResponse(jsonStr);
 
   return {
-    suggestions,
+    suggestions: aiResult.titles,
+    description: aiResult.description,
+    tags: aiResult.tags,
     inputTokens: response.usage?.input_tokens ?? 0,
     outputTokens: response.usage?.output_tokens ?? 0,
+  };
+}
+
+// ─── Gemini Call (raw fetch) ─────────────────────────────────────────────────
+
+async function callGemini(
+  apiKey: string,
+  model: string,
+  prompt: string,
+  dataUrl: string,
+  mimeType: string,
+): Promise<{ suggestions: string[]; description: string | null; tags: string[]; inputTokens: number; outputTokens: number }> {
+  const base64 = dataUrl.split(',')[1];
+
+  const res = await globalThis.fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { inlineData: { mimeType, data: base64 } },
+              { text: prompt },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          maxOutputTokens: 512,
+        },
+      }),
+    },
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: { message: `Gemini ${res.status}` } }));
+    throw new Error(err.error?.message ?? `Gemini request failed (${res.status})`);
+  }
+
+  const response = await res.json() as {
+    candidates?: Array<{ content: { parts: Array<{ text?: string }> } }>;
+    usageMetadata?: { promptTokenCount: number; candidatesTokenCount: number };
+  };
+
+  const raw = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
+  const aiResult = parseAiResponse(raw);
+
+  return {
+    suggestions: aiResult.titles,
+    description: aiResult.description,
+    tags: aiResult.tags,
+    inputTokens: response.usageMetadata?.promptTokenCount ?? 0,
+    outputTokens: response.usageMetadata?.candidatesTokenCount ?? 0,
   };
 }

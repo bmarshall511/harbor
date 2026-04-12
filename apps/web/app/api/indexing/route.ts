@@ -3,11 +3,23 @@ import { IndexingJob } from '@harbor/jobs';
 import { requireAuth, requirePermission } from '@/lib/auth';
 import { getSecret } from '@/lib/secrets';
 import { ArchiveRootRepository, db } from '@harbor/database';
+import { isCloudMode } from '@/lib/deployment';
 
 export const maxDuration = 120;
 
+/** Max execution time per chunk (seconds). Leave 20s buffer for Vercel. */
+const CHUNK_TIMEOUT_MS = isCloudMode ? 95_000 : 0; // 0 = no timeout for local
+
 const rootRepo = new ArchiveRootRepository();
 
+/**
+ * POST /api/indexing
+ *
+ * For local mode: runs indexing to completion (no timeout).
+ * For cloud mode (Vercel): runs for up to 95 seconds per request.
+ * The UI auto-retries via the `continue` field in the response,
+ * enabling indexing of archives that take hours or days.
+ */
 export async function POST(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
@@ -16,7 +28,7 @@ export async function POST(request: Request) {
   if (denied) return denied;
 
   try {
-    const { archiveRootId } = await request.json();
+    const { archiveRootId, continueJobId } = await request.json();
     if (!archiveRootId) {
       return NextResponse.json({ message: 'archiveRootId is required' }, { status: 400 });
     }
@@ -36,25 +48,45 @@ export async function POST(request: Request) {
       dropboxCredentials = { appKey, appSecret };
     }
 
-    // Cancel any existing RUNNING or QUEUED index jobs for this archive
-    // so re-indexing restarts instead of queueing a duplicate.
-    await db.backgroundJob.updateMany({
-      where: {
-        type: 'index',
-        status: { in: ['RUNNING', 'QUEUED'] },
-        metadata: { path: ['archiveRootId'], equals: archiveRootId },
-      },
-      data: { status: 'FAILED', error: 'Cancelled — re-index requested', completedAt: new Date() },
-    });
+    // Only cancel existing jobs when starting fresh (not continuing)
+    if (!continueJobId) {
+      await db.backgroundJob.updateMany({
+        where: {
+          type: 'index',
+          status: { in: ['RUNNING', 'QUEUED'] },
+          metadata: { path: ['archiveRootId'], equals: archiveRootId },
+        },
+        data: { status: 'FAILED', error: 'Cancelled — re-index requested', completedAt: new Date() },
+      });
+    }
 
-    // Run indexing synchronously — the response doesn't return until
-    // indexing completes. On Vercel this keeps the function alive for
-    // up to maxDuration (120s). Progress is written to the DB every
-    // 2 seconds so the UI's IndexingStatus component can poll it.
     const indexingJob = new IndexingJob();
+
+    // Set a deadline for cloud mode so we don't exceed Vercel's timeout
+    if (CHUNK_TIMEOUT_MS > 0) {
+      indexingJob.setDeadline(Date.now() + CHUNK_TIMEOUT_MS);
+    }
+
     await indexingJob.indexArchiveRoot(archiveRootId, auth.userId, dropboxCredentials);
 
-    return NextResponse.json({ message: 'Indexing complete', archiveRootId });
+    // Check if the job hit the deadline and needs to continue
+    if (indexingJob.wasInterrupted()) {
+      return NextResponse.json({
+        message: 'Indexing in progress',
+        archiveRootId,
+        status: 'in_progress',
+        continue: true,
+        filesProcessed: indexingJob.getStats().filesProcessed,
+        foldersProcessed: indexingJob.getStats().foldersProcessed,
+      });
+    }
+
+    return NextResponse.json({
+      message: 'Indexing complete',
+      archiveRootId,
+      status: 'complete',
+      continue: false,
+    });
   } catch (error: unknown) {
     console.error('[Indexing] Failed:', error);
     const message = error instanceof Error ? error.message : 'Indexing failed';
