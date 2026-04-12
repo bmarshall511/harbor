@@ -509,6 +509,7 @@ model Person {
   linkedUser             User?                @relation("person_linked_user", fields: [linkedUserId], references: [id], onDelete: SetNull)
   relationshipsAsSource  PersonRelationship[] @relation("relationship_source")
   relationshipsAsTarget  PersonRelationship[] @relation("relationship_target")
+  groupMemberships       PersonGroupMember[]
 
   @@index([name])
   @@map("persons")
@@ -521,6 +522,7 @@ model PersonRelationship {
   relationType    String   @map("relation_type")
   label           String?
   isBidirectional Boolean  @default(false) @map("is_bidirectional")
+  reciprocalId    String?  @map("reciprocal_id") @db.Uuid // Links to the auto-created inverse relationship
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -529,7 +531,36 @@ model PersonRelationship {
 
   @@index([sourcePersonId])
   @@index([targetPersonId])
+  @@index([reciprocalId])
   @@map("person_relationships")
+}
+
+model PersonGroup {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  color     String?  // Hex color for graph clustering
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  members PersonGroupMember[]
+
+  @@map("person_groups")
+}
+
+model PersonGroupMember {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  groupId   String   @map("group_id") @db.Uuid
+  personId  String   @map("person_id") @db.Uuid
+  role      String?  // Optional role within the group (e.g. "parent", "child", "pet")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  group  PersonGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  person Person      @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, personId])
+  @@index([groupId])
+  @@index([personId])
+  @@map("person_group_members")
 }
 
 model Face {

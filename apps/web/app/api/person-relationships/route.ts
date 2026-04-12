@@ -4,27 +4,76 @@ import { requireAuth, requirePermission } from '@/lib/auth';
 
 const PERSON_SELECT = { id: true, name: true, avatarUrl: true, entityType: true };
 
-/** GET /api/person-relationships — List all person relationships with joined person data. */
+/**
+ * Relationship type mapping for auto-reciprocals.
+ *
+ * Symmetric types (spouse, partner, sibling, friend, cousin, colleague)
+ * create the same type in both directions.
+ *
+ * Directional types create the inverse in the other direction.
+ */
+const INVERSE_MAP: Record<string, string> = {
+  parent: 'child',
+  child: 'parent',
+  grandparent: 'grandchild',
+  grandchild: 'grandparent',
+  'aunt/uncle': 'niece/nephew',
+  'niece/nephew': 'aunt/uncle',
+  manager: 'report',
+  report: 'manager',
+  owner: 'pet_of',
+  pet_of: 'owner',
+};
+
+const SYMMETRIC_TYPES = new Set([
+  'spouse', 'partner', 'sibling', 'friend', 'cousin', 'colleague',
+]);
+
+function getInverse(relationType: string): string {
+  if (SYMMETRIC_TYPES.has(relationType)) return relationType;
+  return INVERSE_MAP[relationType] ?? relationType;
+}
+
+/**
+ * GET /api/person-relationships
+ *
+ * Returns relationships de-duplicated: only the "primary" side is
+ * returned (where reciprocalId is null or the row is the one with
+ * the lower id). The admin UI shows each relationship as one row
+ * with both people visible.
+ */
 export async function GET(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const relationships = await db.personRelationship.findMany({
+    const all = await db.personRelationship.findMany({
       include: {
         sourcePerson: { select: PERSON_SELECT },
         targetPerson: { select: PERSON_SELECT },
       },
       orderBy: { createdAt: 'desc' },
     });
-    return NextResponse.json(relationships);
+
+    // Only return primary relationships (not the auto-created reciprocals).
+    // Primary = has no reciprocalId (it's the one the user created).
+    const primary = all.filter((r) => !r.reciprocalId);
+
+    return NextResponse.json(primary);
   } catch (err) {
     console.error('[PersonRelationships] GET failed:', err);
-    return NextResponse.json([], { status: 200 });
+    return NextResponse.json([]);
   }
 }
 
-/** POST /api/person-relationships — Create a new relationship (admin only). */
+/**
+ * POST /api/person-relationships
+ *
+ * Creates a relationship AND its automatic reciprocal.
+ * "Mom is parent of Ben" creates:
+ *   1. Mom → parent → Ben (primary)
+ *   2. Ben → child → Mom (reciprocal, linked via reciprocalId)
+ */
 export async function POST(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
@@ -54,21 +103,42 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: 'One or both persons not found' }, { status: 404 });
     }
 
-    const relationship = await db.personRelationship.create({
+    const inverseType = getInverse(relationType);
+    const isSymmetric = SYMMETRIC_TYPES.has(relationType);
+
+    // Create the primary relationship
+    const primary = await db.personRelationship.create({
       data: {
         sourcePersonId,
         targetPersonId,
         relationType,
         label: label || null,
-        isBidirectional: isBidirectional ?? false,
+        isBidirectional: isSymmetric || (isBidirectional ?? false),
       },
+    });
+
+    // Create the auto-reciprocal (inverse direction)
+    await db.personRelationship.create({
+      data: {
+        sourcePersonId: targetPersonId,
+        targetPersonId: sourcePersonId,
+        relationType: inverseType,
+        label: label || null,
+        isBidirectional: isSymmetric || (isBidirectional ?? false),
+        reciprocalId: primary.id, // Links back to the primary
+      },
+    });
+
+    // Re-fetch with joined data for the response
+    const result = await db.personRelationship.findUnique({
+      where: { id: primary.id },
       include: {
         sourcePerson: { select: PERSON_SELECT },
         targetPerson: { select: PERSON_SELECT },
       },
     });
 
-    return NextResponse.json(relationship, { status: 201 });
+    return NextResponse.json(result, { status: 201 });
   } catch (err) {
     console.error('[PersonRelationships] POST failed:', err);
     const message = err instanceof Error ? err.message : 'Failed to create relationship';

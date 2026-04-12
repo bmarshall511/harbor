@@ -229,7 +229,7 @@ function SettingsContent({ section }: { section: SettingsSectionId }) {
     case 'appearance': return <AppearanceSection />;
     case 'general': return <GeneralSettingsSection />;
     case 'users': return <UserManagementSection />;
-    case 'people': return <><PeopleManagementSection /><PersonRelationshipsSection /></>;
+    case 'people': return <><PeopleManagementSection /><PersonRelationshipsSection /><PersonGroupsSection /></>;
     case 'search-analytics': return <SearchAnalyticsSection />;
     case 'metadata': return <MetadataFieldsSection />;
     case 'archive-roots': return <ArchiveRootsSection />;
@@ -2751,7 +2751,7 @@ function PersonRelationshipsSection() {
       <SectionHeader
         icon={Network}
         title="Relationships"
-        description="Define how people and pets are connected. These relationships power the Connections graph."
+        description="Define how people and pets are connected. Reciprocal relationships are created automatically — adding &quot;Mom is parent of Ben&quot; also creates &quot;Ben is child of Mom&quot;."
       />
 
       <div className="mt-4 flex items-center justify-between">
@@ -2898,6 +2898,305 @@ function PersonRelationshipsSection() {
 }
 
 // ─── Person Picker Grid (avatar-based selector) ──────────────────────────────
+
+// ─── Person Groups ────────────────────────────────────────────────────────────
+
+function PersonGroupsSection() {
+  const queryClient = useQueryClient();
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newColor, setNewColor] = useState('#3b82f6');
+
+  const { data: people } = useQuery({
+    queryKey: ['persons'],
+    queryFn: async () => {
+      const res = await fetch('/api/persons');
+      return res.json() as Promise<Array<{ id: string | null; name: string | null; avatarUrl: string | null; entityType?: string; source: string }>>;
+    },
+  });
+
+  const dbPeople = (people ?? []).filter((p) => p.source === 'record' && p.id);
+
+  const { data: groups, isLoading } = useQuery({
+    queryKey: ['person-groups'],
+    queryFn: async () => {
+      const res = await fetch('/api/person-groups');
+      return res.json() as Promise<Array<{
+        id: string;
+        name: string;
+        color: string | null;
+        members: Array<{
+          id: string;
+          role: string | null;
+          person: { id: string; name: string | null; avatarUrl: string | null; entityType: string };
+        }>;
+      }>>;
+    },
+  });
+
+  const createMut = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/person-groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName.trim(), color: newColor }),
+      });
+      if (!res.ok) throw new Error((await res.json()).message);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-groups'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      setNewName('');
+      setShowCreate(false);
+      toast.success('Group created');
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => {
+      await fetch(`/api/person-groups/${id}`, { method: 'DELETE' });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-groups'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      toast.success('Group deleted');
+    },
+  });
+
+  const addMemberMut = useMutation({
+    mutationFn: async ({ groupId, personId, role }: { groupId: string; personId: string; role?: string }) => {
+      const res = await fetch(`/api/person-groups/${groupId}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personId, role }),
+      });
+      if (!res.ok) throw new Error((await res.json()).message);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-groups'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const removeMemberMut = useMutation({
+    mutationFn: async ({ groupId, personId }: { groupId: string; personId: string }) => {
+      await fetch(`/api/person-groups/${groupId}/members`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personId }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-groups'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+    },
+  });
+
+  return (
+    <section className="mt-10">
+      <SectionHeader
+        icon={Users}
+        title="Groups"
+        description="Organize people into named groups (families, teams, friend circles). Groups are shown as visual clusters on the Connections graph."
+      />
+
+      <div className="mt-4 flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          {groups?.length ?? 0} {(groups?.length ?? 0) === 1 ? 'group' : 'groups'}
+        </p>
+        <button
+          type="button"
+          onClick={() => setShowCreate(true)}
+          className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          Create group
+        </button>
+      </div>
+
+      {showCreate && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-border bg-card p-3">
+          <input
+            type="color"
+            value={newColor}
+            onChange={(e) => setNewColor(e.target.value)}
+            className="h-8 w-8 shrink-0 cursor-pointer rounded border border-border"
+            title="Group color"
+          />
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="Group name (e.g. Marshall Family)"
+            className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && newName.trim()) createMut.mutate();
+              if (e.key === 'Escape') setShowCreate(false);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => newName.trim() && createMut.mutate()}
+            disabled={!newName.trim() || createMut.isPending}
+            className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          >
+            Create
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowCreate(false); setNewName(''); }}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="mt-4 text-sm text-muted-foreground">Loading...</div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {groups && groups.length > 0 ? groups.map((group) => {
+            const memberIds = new Set(group.members.map((m) => m.person.id));
+            const availablePeople = dbPeople.filter((p) => p.id && !memberIds.has(p.id));
+
+            return (
+              <div key={group.id} className="rounded-lg border border-border">
+                {/* Group header */}
+                <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                  {group.color && (
+                    <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: group.color }} />
+                  )}
+                  <h4 className="flex-1 text-sm font-semibold">{group.name}</h4>
+                  <span className="text-[10px] text-muted-foreground">{group.members.length} members</span>
+                  <button
+                    type="button"
+                    onClick={() => { if (confirm(`Delete group "${group.name}"?`)) deleteMut.mutate(group.id); }}
+                    className="rounded-md p-1 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+                    aria-label="Delete group"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                {/* Members */}
+                <div className="p-3">
+                  <div className="flex flex-wrap gap-2">
+                    {group.members.map((m) => {
+                      const isPet = m.person.entityType === 'PET';
+                      return (
+                        <div key={m.id} className="group flex items-center gap-1.5 rounded-full border border-border bg-card pl-1 pr-2 py-0.5">
+                          {m.person.avatarUrl ? (
+                            <img src={m.person.avatarUrl} alt="" className={cn('h-5 w-5 object-cover', isPet ? 'rounded-md' : 'rounded-full')} />
+                          ) : (
+                            <div className={cn('flex h-5 w-5 items-center justify-center', isPet ? 'rounded-md bg-amber-500/10' : 'rounded-full bg-muted')}>
+                              {isPet ? <PawPrint className="h-2.5 w-2.5 text-amber-500" /> : <Users className="h-2.5 w-2.5 text-muted-foreground" />}
+                            </div>
+                          )}
+                          <span className="text-xs">{m.person.name}</span>
+                          {m.role && <span className="text-[9px] text-muted-foreground">({m.role})</span>}
+                          <button
+                            type="button"
+                            onClick={() => removeMemberMut.mutate({ groupId: group.id, personId: m.person.id })}
+                            className="opacity-0 group-hover:opacity-100 rounded-full p-0.5 text-muted-foreground hover:text-destructive transition-opacity"
+                            aria-label={`Remove ${m.person.name}`}
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+
+                    {/* Add member dropdown */}
+                    {availablePeople.length > 0 && (
+                      <PersonAddDropdown
+                        people={availablePeople}
+                        onAdd={(personId) => addMemberMut.mutate({ groupId: group.id, personId })}
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          }) : (
+            <div className="rounded-lg border border-border px-4 py-6 text-center text-sm text-muted-foreground">
+              No groups yet. Create a group to organize people into families, teams, or circles.
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Small "+" button that opens a searchable person dropdown for adding group members. */
+function PersonAddDropdown({
+  people,
+  onAdd,
+}: {
+  people: Array<{ id: string | null; name: string | null; avatarUrl: string | null; entityType?: string }>;
+  onAdd: (personId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const filtered = people.filter((p) => p.id && (!search || p.name?.toLowerCase().includes(search.toLowerCase())));
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => { setOpen(!open); setSearch(''); }}
+        className="flex h-7 items-center gap-1 rounded-full border border-dashed border-border px-2 text-[11px] text-muted-foreground hover:border-primary/30 hover:text-foreground transition"
+      >
+        <Plus className="h-3 w-3" /> Add
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-border bg-popover shadow-xl">
+          <div className="p-2">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search..."
+              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+              autoFocus
+              onBlur={() => setTimeout(() => setOpen(false), 150)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}
+            />
+          </div>
+          <div className="max-h-40 overflow-y-auto px-1 pb-1">
+            {filtered.slice(0, 30).map((p) => {
+              if (!p.id) return null;
+              const isPet = p.entityType === 'PET';
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); onAdd(p.id!); setOpen(false); }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-accent"
+                >
+                  {p.avatarUrl ? (
+                    <img src={p.avatarUrl} alt="" className={cn('h-5 w-5 object-cover', isPet ? 'rounded-md' : 'rounded-full')} />
+                  ) : (
+                    <div className={cn('flex h-5 w-5 items-center justify-center', isPet ? 'rounded-md bg-amber-500/10' : 'rounded-full bg-muted')}>
+                      {isPet ? <PawPrint className="h-2.5 w-2.5 text-amber-500" /> : <Users className="h-2.5 w-2.5 text-muted-foreground" />}
+                    </div>
+                  )}
+                  <span className="truncate">{p.name}</span>
+                </button>
+              );
+            })}
+            {filtered.length === 0 && (
+              <p className="px-2 py-2 text-center text-[11px] text-muted-foreground">No matches</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Person Picker (searchable dropdown for relationships) ────────────────────
 
 function PersonPickerGrid({
   people,
