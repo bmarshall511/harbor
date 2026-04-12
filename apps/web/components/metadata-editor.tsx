@@ -39,19 +39,24 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
     queryFn: async () => { const r = await fetch('/api/metadata-fields'); return r.json(); },
   });
 
-  // Initialize form data from file. Caption + altText now live in
-  // `meta.fields` rather than as typed columns; they're still
-  // editable as plain text fields like before.
+  // Initialize form data from file. Only reset when navigating to a
+  // different file (ID change), NOT on every refetch — otherwise
+  // in-flight edits (e.g. AI suggestions applied but not yet saved)
+  // get wiped by a background query invalidation.
+  const prevFileIdRef = useRef(file.id);
   useEffect(() => {
-    const fields = file.meta?.fields ?? {};
-    setFormData({
-      title: file.title ?? '',
-      description: file.description ?? '',
-      caption: (fields.caption as string | undefined) ?? '',
-      altText: (fields.altText as string | undefined) ?? '',
-      rating: file.rating ?? 0,
-    });
-  }, [file]);
+    if (prevFileIdRef.current !== file.id || !editing) {
+      const fields = file.meta?.fields ?? {};
+      setFormData({
+        title: file.title ?? '',
+        description: file.description ?? '',
+        caption: (fields.caption as string | undefined) ?? '',
+        altText: (fields.altText as string | undefined) ?? '',
+        rating: file.rating ?? 0,
+      });
+      prevFileIdRef.current = file.id;
+    }
+  }, [file.id, file.title, file.description, file.rating, file.meta, editing]);
 
   const setField = (key: string, value: any) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
