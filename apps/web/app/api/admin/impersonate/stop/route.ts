@@ -35,6 +35,10 @@ export async function GET(request: Request) {
     path: '/',
     maxAge: 0,
   });
+  response.cookies.set('harbor-impersonating', '', {
+    path: '/',
+    maxAge: 0,
+  });
 
   return response;
 }

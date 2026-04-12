@@ -43,6 +43,14 @@ export async function GET(request: Request) {
       response.cookies.set('harbor-admin-session', adminToken, cookieOptions);
     }
 
+    // Non-httpOnly marker so the client-side banner can detect impersonation
+    response.cookies.set('harbor-impersonating', '1', {
+      path: '/',
+      sameSite: 'lax' as const,
+      maxAge: 86400,
+      secure: isSecure,
+    });
+
     return response;
   } catch {
     return NextResponse.redirect(new URL('/', request.url));

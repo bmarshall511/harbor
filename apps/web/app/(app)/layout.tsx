@@ -136,15 +136,14 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
 
 /**
  * Banner shown when an admin is impersonating another user.
- * Detects the `harbor-admin-session` backup cookie and displays
- * a fixed banner with a "Switch back" button.
+ * Detects the `harbor-impersonating` marker cookie (non-httpOnly)
+ * and displays a fixed banner with a "Switch back" button.
  */
 function ImpersonationBanner() {
   const [isImpersonating, setIsImpersonating] = useState(false);
 
   useEffect(() => {
-    // Check if the backup admin cookie exists (set during impersonation)
-    setIsImpersonating(document.cookie.includes('harbor-admin-session'));
+    setIsImpersonating(document.cookie.includes('harbor-impersonating'));
   }, []);
 
   if (!isImpersonating) return null;
