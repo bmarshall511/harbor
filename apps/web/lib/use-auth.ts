@@ -100,7 +100,9 @@ export function useAuth() {
       if (!data?.user) return false;
       // Owner always has all permissions
       if (data.user.isOwner) return true;
-      return data.user.permissions.some((p) => p.resource === resource && p.action === action);
+      // Also check systemRole as fallback for Owner (handles stale cached responses)
+      if (data.user.roles?.some((r) => r.systemRole === 'OWNER')) return true;
+      return (data.user.permissions ?? []).some((p) => p.resource === resource && p.action === action);
     },
   };
 }

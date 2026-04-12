@@ -3,7 +3,6 @@ import { FileRepository, ArchiveRootRepository, db } from '@harbor/database';
 import { ArchiveMetadataService } from '@harbor/providers';
 import { fileUpdatePayloadFromJson, syncTagsForFile, metaRootForArchive } from '@harbor/jobs';
 import { requireAuth, requirePermission, permissionService } from '@/lib/auth';
-import type { AuthContext } from '@harbor/auth';
 import { audit } from '@/lib/audit';
 import { emit } from '@/lib/events';
 import { serializeFile } from '@/lib/file-dto';

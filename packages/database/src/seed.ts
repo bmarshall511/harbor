@@ -1,6 +1,4 @@
-import { PrismaClient } from '../generated/prisma/client';
-
-const db = new PrismaClient();
+import { db } from './client';
 
 // ── Permission definitions per role ──────────────────────────────────
 // Owner is immutable (always has all permissions via fast-path),
@@ -251,4 +249,4 @@ seed()
     console.error('Seed failed:', e);
     process.exit(1);
   })
-  .finally(() => db.$disconnect());
+  .finally(() => process.exit(0));

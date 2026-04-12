@@ -52,6 +52,7 @@ import { SecretField } from '@/components/secret-field';
 import { AvatarPicker } from '@/components/avatar-picker';
 import { DropboxFolderPicker } from '@/components/dropbox-folder-picker';
 import { LocalFolderPicker } from '@/components/local-folder-picker';
+import { AddPersonWizard } from '@/components/add-person-wizard';
 
 /**
  * Settings is organised into discrete subpages selected via the
@@ -109,10 +110,12 @@ const GROUP_LABELS: Record<SettingsNavEntry['group'], string> = {
 };
 
 export default function SettingsPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, isLoading } = useAuth();
 
-  // Filter nav entries by user's permissions
-  const visibleNav = SETTINGS_NAV.filter((entry) => hasPermission(entry.permission, 'access'));
+  // While auth is loading, show all nav entries so the page doesn't flash empty
+  const visibleNav = isLoading
+    ? SETTINGS_NAV
+    : SETTINGS_NAV.filter((entry) => hasPermission(entry.permission, 'access'));
 
   // Read the active section from `?s=`. Defaults to first visible section.
   const defaultSection = visibleNav[0]?.id ?? 'appearance';
@@ -239,7 +242,7 @@ function SettingsContent({ section }: { section: SettingsSectionId }) {
     case 'appearance': return <AppearanceSection />;
     case 'general': return <GeneralSettingsSection />;
     case 'users': return <><UserManagementSection /><RolePermissionsSection /></>;
-    case 'people': return <><PeopleManagementSection /><PersonRelationshipsSection /><PersonGroupsSection /></>;
+    case 'people': return <PeopleSettingsPage />;
     case 'search-analytics': return <SearchAnalyticsSection />;
     case 'metadata': return <MetadataFieldsSection />;
     case 'archive-roots': return <ArchiveRootsSection />;
@@ -734,6 +737,96 @@ interface RoleWithPerms {
   permissions: Array<{ resource: string; action: string }>;
 }
 
+function PermGroup({ title, defs, roles, roleHasPerm, togglePerm, toggleGroupForRole }: {
+  title: string;
+  defs: PermissionDef[];
+  roles: RoleWithPerms[];
+  roleHasPerm: (role: RoleWithPerms, resource: string, action: string) => boolean;
+  togglePerm: (role: RoleWithPerms, resource: string, action: string) => void;
+  toggleGroupForRole: (role: RoleWithPerms, defs: PermissionDef[]) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <div className="rounded-lg border border-border">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="flex w-full items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-accent/50"
+      >
+        <span>{title}</span>
+        <span className="text-[10px] font-normal">{collapsed ? 'Show' : 'Hide'}</span>
+      </button>
+      {!collapsed && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-t border-border bg-muted/30">
+                <th className="px-3 py-1.5 text-left font-medium text-muted-foreground">Permission</th>
+                {roles.map((role) => (
+                  <th key={role.id} className="px-2 py-1.5 text-center font-medium text-muted-foreground min-w-[70px]">
+                    {role.name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-border bg-muted/10">
+                <td className="px-3 py-1.5 font-medium italic text-muted-foreground">Toggle All</td>
+                {roles.map((role) => {
+                  const allOn = defs.every((d) => roleHasPerm(role, d.resource, d.action));
+                  return (
+                    <td key={role.id} className="px-2 py-1.5 text-center">
+                      <button
+                        onClick={() => toggleGroupForRole(role, defs)}
+                        disabled={role.systemRole === 'OWNER'}
+                        className={cn(
+                          'inline-flex h-5 w-9 items-center rounded-full transition-colors',
+                          allOn ? 'bg-primary' : 'bg-muted-foreground/20',
+                          role.systemRole === 'OWNER' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+                        )}
+                      >
+                        <span className={cn(
+                          'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                          allOn ? 'translate-x-[18px]' : 'translate-x-[3px]',
+                        )} />
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
+              {defs.map((def) => (
+                <tr key={`${def.resource}:${def.action}`} className="border-t border-border/50">
+                  <td className="px-3 py-1.5 text-foreground">{def.label}</td>
+                  {roles.map((role) => {
+                    const on = roleHasPerm(role, def.resource, def.action);
+                    return (
+                      <td key={role.id} className="px-2 py-1.5 text-center">
+                        <button
+                          onClick={() => togglePerm(role, def.resource, def.action)}
+                          disabled={role.systemRole === 'OWNER'}
+                          className={cn(
+                            'inline-flex h-5 w-9 items-center rounded-full transition-colors',
+                            on ? 'bg-primary' : 'bg-muted-foreground/20',
+                            role.systemRole === 'OWNER' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+                          )}
+                        >
+                          <span className={cn(
+                            'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                            on ? 'translate-x-[18px]' : 'translate-x-[3px]',
+                          )} />
+                        </button>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RolePermissionsSection() {
   const { hasPermission } = useAuth();
   const queryClient = useQueryClient();
@@ -768,7 +861,6 @@ function RolePermissionsSection() {
 
   const saveMutation = useMutation({
     mutationFn: async ({ roleId, permissions }: { roleId: string; permissions: Array<{ resource: string; action: string }> }) => {
-      setSavingRoles((prev) => new Set(prev).add(roleId));
       const res = await fetch(`/api/roles/${roleId}/permissions`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -776,18 +868,17 @@ function RolePermissionsSection() {
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
     },
-    onSettled: (_data, _err, variables) => {
-      setSavingRoles((prev) => {
-        const next = new Set(prev);
-        if (variables) next.delete(variables.roleId);
-        return next;
-      });
+    onMutate: (variables) => {
+      setSavingRoles((prev) => new Set(prev).add(variables.roleId));
     },
-    onSuccess: () => {
-      // Silently refresh roles data in background without causing scroll
-      queryClient.invalidateQueries({ queryKey: ['roles'] });
-      // Debounce the auth refresh so rapid toggles don't thrash
-      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
+    onSettled: (_data, _err, variables) => {
+      if (variables) {
+        setSavingRoles((prev) => {
+          const next = new Set(prev);
+          next.delete(variables.roleId);
+          return next;
+        });
+      }
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -846,90 +937,6 @@ function RolePermissionsSection() {
 
   const isSaving = savingRoles.size > 0;
 
-  function PermGroup({ title, defs }: { title: string; defs: PermissionDef[] }) {
-    const [collapsed, setCollapsed] = useState(false);
-    return (
-      <div className="rounded-lg border border-border">
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex w-full items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-accent/50"
-        >
-          <span>{title}</span>
-          <span className="text-[10px] font-normal">{collapsed ? 'Show' : 'Hide'}</span>
-        </button>
-        {!collapsed && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-t border-border bg-muted/30">
-                  <th className="px-3 py-1.5 text-left font-medium text-muted-foreground">Permission</th>
-                  {sortedRoles.map((role) => (
-                    <th key={role.id} className="px-2 py-1.5 text-center font-medium text-muted-foreground min-w-[70px]">
-                      {role.name}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {/* Toggle all row */}
-                <tr className="border-t border-border bg-muted/10">
-                  <td className="px-3 py-1.5 font-medium italic text-muted-foreground">Toggle All</td>
-                  {sortedRoles.map((role) => {
-                    const allOn = defs.every((d) => roleHasPerm(role, d.resource, d.action));
-                    return (
-                      <td key={role.id} className="px-2 py-1.5 text-center">
-                        <button
-                          onClick={() => toggleGroupForRole(role, defs)}
-                          disabled={role.systemRole === 'OWNER'}
-                          className={cn(
-                            'inline-flex h-5 w-9 items-center rounded-full transition-colors',
-                            allOn ? 'bg-primary' : 'bg-muted-foreground/20',
-                            role.systemRole === 'OWNER' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
-                          )}
-                        >
-                          <span className={cn(
-                            'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
-                            allOn ? 'translate-x-[18px]' : 'translate-x-[3px]',
-                          )} />
-                        </button>
-                      </td>
-                    );
-                  })}
-                </tr>
-                {defs.map((def) => (
-                  <tr key={`${def.resource}:${def.action}`} className="border-t border-border/50">
-                    <td className="px-3 py-1.5 text-foreground">{def.label}</td>
-                    {sortedRoles.map((role) => {
-                      const on = roleHasPerm(role, def.resource, def.action);
-                      return (
-                        <td key={role.id} className="px-2 py-1.5 text-center">
-                          <button
-                            onClick={() => togglePerm(role, def.resource, def.action)}
-                            disabled={role.systemRole === 'OWNER'}
-                            className={cn(
-                              'inline-flex h-5 w-9 items-center rounded-full transition-colors',
-                              on ? 'bg-primary' : 'bg-muted-foreground/20',
-                              role.systemRole === 'OWNER' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
-                            )}
-                          >
-                            <span className={cn(
-                              'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
-                              on ? 'translate-x-[18px]' : 'translate-x-[3px]',
-                            )} />
-                          </button>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
     <section className="mt-8">
       <SectionHeader icon={Shield} title="Role Permissions" description="Configure what each role can access and edit" />
@@ -940,9 +947,9 @@ function RolePermissionsSection() {
         </div>
       )}
       <div className="mt-4 space-y-4">
-        <PermGroup title="Settings Access" defs={SETTINGS_PERMISSION_DEFS} />
-        <PermGroup title="Item Fields" defs={itemDefs} />
-        <PermGroup title="Review" defs={REVIEW_PERMISSION_DEFS} />
+        <PermGroup title="Settings Access" defs={SETTINGS_PERMISSION_DEFS} roles={sortedRoles} roleHasPerm={roleHasPerm} togglePerm={togglePerm} toggleGroupForRole={toggleGroupForRole} />
+        <PermGroup title="Item Fields" defs={itemDefs} roles={sortedRoles} roleHasPerm={roleHasPerm} togglePerm={togglePerm} toggleGroupForRole={toggleGroupForRole} />
+        <PermGroup title="Review" defs={REVIEW_PERMISSION_DEFS} roles={sortedRoles} roleHasPerm={roleHasPerm} togglePerm={togglePerm} toggleGroupForRole={toggleGroupForRole} />
       </div>
     </section>
   );
@@ -2877,6 +2884,51 @@ function IgnorePatternsEditor({ value, onSave }: { value: string; onSave: (val: 
   );
 }
 
+// ─── People settings — tabbed sub-page ────────────────────────────────────────
+
+type PeopleTab = 'people' | 'relationships' | 'groups';
+
+function PeopleSettingsPage() {
+  const [tab, setTab] = useState<PeopleTab>('people');
+
+  const tabs: Array<{ id: PeopleTab; label: string; icon: typeof Users }> = [
+    { id: 'people', label: 'People & Pets', icon: Users },
+    { id: 'relationships', label: 'Relationships', icon: Network },
+    { id: 'groups', label: 'Groups', icon: UserPlus },
+  ];
+
+  return (
+    <div>
+      {/* Sub-tabs */}
+      <div className="flex items-center gap-1 border-b border-border mb-6">
+        {tabs.map((t) => {
+          const Icon = t.icon;
+          const isActive = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                'flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors -mb-px',
+                isActive
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === 'people' && <PeopleManagementSection />}
+      {tab === 'relationships' && <PersonRelationshipsSection />}
+      {tab === 'groups' && <PersonGroupsSection />}
+    </div>
+  );
+}
+
 // ─── People management ────────────────────────────────────────────────────────
 
 function PeopleManagementSection() {
@@ -2892,6 +2944,8 @@ function PeopleManagementSection() {
   const [linkingUserId, setLinkingUserId] = useState<string | null>(null);
   const [mergeSelection, setMergeSelection] = useState<Set<string>>(new Set());
   const [merging, setMerging] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
+  const [wizardPersonId, setWizardPersonId] = useState<string | undefined>(undefined);
 
   const { data: people, isLoading } = useQuery({
     queryKey: ['persons'],
@@ -3069,12 +3123,25 @@ function PeopleManagementSection() {
           <button
             type="button"
             onClick={() => setShowCreate(true)}
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            Quick add
+          </button>
+          <button
+            type="button"
+            onClick={() => { setWizardPersonId(undefined); setShowWizard(true); }}
             className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
           >
-            Add person or pet
+            Add with relationships
           </button>
         </div>
       </div>
+
+      <AddPersonWizard
+        open={showWizard}
+        onClose={() => setShowWizard(false)}
+        existingPersonId={wizardPersonId}
+      />
 
       {showCreate && (
         <div className="mt-3 rounded-lg border border-border bg-card p-3 space-y-2">
@@ -3352,6 +3419,15 @@ function PeopleManagementSection() {
                       <div className="flex items-center gap-1">
                         {isRecord ? (
                           <>
+                            <button
+                              type="button"
+                              onClick={() => { setWizardPersonId(person.id!); setShowWizard(true); }}
+                              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                              aria-label="Add relationships"
+                              title="Add relationships"
+                            >
+                              <Network className="h-3.5 w-3.5" />
+                            </button>
                             <button
                               type="button"
                               onClick={() => { setEditingId(person.id); setEditName(person.name ?? ''); setEditGender(person.gender ?? ''); setEditEntityType(person.entityType ?? 'PERSON'); }}
@@ -3710,6 +3786,76 @@ function PersonRelationshipsSection() {
     },
   });
 
+  // Suggestions: detect missing relationships
+  const { data: suggestionsData } = useQuery({
+    queryKey: ['relationship-suggestions'],
+    queryFn: async () => {
+      const res = await fetch('/api/person-relationships/suggestions');
+      if (!res.ok) return null;
+      return res.json() as Promise<{
+        suggestions: Array<{
+          sourcePersonId: string; sourceName: string;
+          targetPersonId: string; targetName: string;
+          relationType: string; rule: string; reason: string;
+        }>;
+        duplicates: Array<{ sourcePersonId: string; targetPersonId: string; relationType: string; count: number }>;
+        missingReciprocals: Array<{
+          sourcePersonId: string; sourceName: string;
+          targetPersonId: string; targetName: string;
+          relationType: string; expectedInverse: string;
+        }>;
+        totalIssues: number;
+      }>;
+    },
+    staleTime: 30_000,
+  });
+
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  const fixSuggestion = useMutation({
+    mutationFn: async (rel: { sourcePersonId: string; targetPersonId: string; relationType: string }) => {
+      const res = await fetch('/api/person-relationships/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relationships: [rel] }),
+      });
+      if (!res.ok) throw new Error('Failed');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-relationships'] });
+      queryClient.invalidateQueries({ queryKey: ['relationship-suggestions'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      toast.success('Relationship created');
+    },
+  });
+
+  const fixAllSuggestions = useMutation({
+    mutationFn: async () => {
+      if (!suggestionsData) return;
+      const rels = suggestionsData.suggestions.map((s) => ({
+        sourcePersonId: s.sourcePersonId,
+        targetPersonId: s.targetPersonId,
+        relationType: s.relationType,
+      }));
+      const res = await fetch('/api/person-relationships/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relationships: rels }),
+      });
+      if (!res.ok) throw new Error('Failed');
+      return res.json() as Promise<{ created: number; skipped: number }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['person-relationships'] });
+      queryClient.invalidateQueries({ queryKey: ['relationship-suggestions'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      toast.success(`Created ${data?.created ?? 0} missing relationships`);
+    },
+  });
+
+  const totalIssues = suggestionsData?.totalIssues ?? 0;
+
   return (
     <section className="mt-10">
       <SectionHeader
@@ -3717,6 +3863,110 @@ function PersonRelationshipsSection() {
         title="Relationships"
         description="Define how people and pets are connected. Reciprocal relationships are created automatically — adding &quot;Mom is parent of Ben&quot; also creates &quot;Ben is child of Mom&quot;."
       />
+
+      {/* Missing relationships alert */}
+      {totalIssues > 0 && (
+        <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              <span className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                {totalIssues} potential missing connection{totalIssues !== 1 ? 's' : ''} detected
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {suggestionsData && suggestionsData.suggestions.length > 0 && (
+                <button
+                  onClick={() => fixAllSuggestions.mutate()}
+                  disabled={fixAllSuggestions.isPending}
+                  className="rounded-md bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-600 hover:bg-amber-500/20 disabled:opacity-50"
+                >
+                  {fixAllSuggestions.isPending ? 'Creating...' : `Fix all ${suggestionsData.suggestions.length}`}
+                </button>
+              )}
+              <button
+                onClick={() => setShowSuggestions((v) => !v)}
+                className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+              >
+                {showSuggestions ? 'Hide' : 'Review'}
+              </button>
+            </div>
+          </div>
+
+          {showSuggestions && suggestionsData && (
+            <div className="mt-3 space-y-3">
+              {/* Missing relationships */}
+              {suggestionsData.suggestions.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
+                    Missing Relationships ({suggestionsData.suggestions.length})
+                  </p>
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {suggestionsData.suggestions.map((s, i) => (
+                      <div key={i} className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs">
+                        <span className="font-medium truncate">{s.sourceName}</span>
+                        <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{s.relationType}</span>
+                        <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground/40" />
+                        <span className="font-medium truncate">{s.targetName}</span>
+                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground truncate max-w-[150px]">{s.reason}</span>
+                        <button
+                          onClick={() => fixSuggestion.mutate({ sourcePersonId: s.sourcePersonId, targetPersonId: s.targetPersonId, relationType: s.relationType })}
+                          disabled={fixSuggestion.isPending}
+                          className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Duplicates */}
+              {suggestionsData.duplicates.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
+                    Duplicate Relationships ({suggestionsData.duplicates.length})
+                  </p>
+                  <div className="space-y-1">
+                    {suggestionsData.duplicates.map((d, i) => (
+                      <div key={i} className="rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground">
+                        {d.relationType} appears {d.count}x between same pair
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Missing reciprocals */}
+              {suggestionsData.missingReciprocals.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
+                    Missing Reciprocals ({suggestionsData.missingReciprocals.length})
+                  </p>
+                  <div className="space-y-1">
+                    {suggestionsData.missingReciprocals.map((r, i) => (
+                      <div key={i} className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs">
+                        <span className="truncate">{r.sourceName} → {r.relationType} → {r.targetName}</span>
+                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                          Missing: {r.targetName} → {r.expectedInverse} → {r.sourceName}
+                        </span>
+                        <button
+                          onClick={() => fixSuggestion.mutate({ sourcePersonId: r.targetPersonId, targetPersonId: r.sourcePersonId, relationType: r.expectedInverse })}
+                          disabled={fixSuggestion.isPending}
+                          className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20"
+                        >
+                          Fix
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-4 flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
