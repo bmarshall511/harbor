@@ -3067,6 +3067,9 @@ function PersonGroupsSection() {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState('#3b82f6');
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editGroupName, setEditGroupName] = useState('');
+  const [editGroupColor, setEditGroupColor] = useState('#3b82f6');
 
   const { data: people } = useQuery({
     queryKey: ['persons'],
@@ -3110,6 +3113,24 @@ function PersonGroupsSection() {
       setNewName('');
       setShowCreate(false);
       toast.success('Group created');
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const updateGroupMut = useMutation({
+    mutationFn: async ({ id, name, color }: { id: string; name: string; color: string }) => {
+      const res = await fetch(`/api/person-groups/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, color }),
+      });
+      if (!res.ok) throw new Error((await res.json()).message);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-groups'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      setEditingGroupId(null);
+      toast.success('Group updated');
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -3226,19 +3247,63 @@ function PersonGroupsSection() {
               <div key={group.id} className="rounded-lg border border-border">
                 {/* Group header */}
                 <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-                  {group.color && (
-                    <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: group.color }} />
+                  {editingGroupId === group.id ? (
+                    <>
+                      <input
+                        type="color"
+                        value={editGroupColor}
+                        onChange={(e) => setEditGroupColor(e.target.value)}
+                        className="h-7 w-7 shrink-0 cursor-pointer rounded border border-border p-0"
+                      />
+                      <input
+                        value={editGroupName}
+                        onChange={(e) => setEditGroupName(e.target.value)}
+                        className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && editGroupName.trim()) updateGroupMut.mutate({ id: group.id, name: editGroupName.trim(), color: editGroupColor });
+                          if (e.key === 'Escape') setEditingGroupId(null);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => editGroupName.trim() && updateGroupMut.mutate({ id: group.id, name: editGroupName.trim(), color: editGroupColor })}
+                        disabled={updateGroupMut.isPending || !editGroupName.trim()}
+                        className="text-xs text-primary hover:underline disabled:opacity-50"
+                      >
+                        {updateGroupMut.isPending ? 'Saving...' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingGroupId(null)}
+                        className="text-xs text-muted-foreground hover:underline"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: group.color ?? '#6b7280' }} />
+                      <h4 className="flex-1 text-sm font-semibold">{group.name}</h4>
+                      <span className="text-[10px] text-muted-foreground">{group.members.length} members</span>
+                      <button
+                        type="button"
+                        onClick={() => { setEditingGroupId(group.id); setEditGroupName(group.name); setEditGroupColor(group.color ?? '#6b7280'); }}
+                        className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        aria-label="Edit group"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { if (confirm(`Delete group "${group.name}"?`)) deleteMut.mutate(group.id); }}
+                        className="rounded-md p-1 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+                        aria-label="Delete group"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
                   )}
-                  <h4 className="flex-1 text-sm font-semibold">{group.name}</h4>
-                  <span className="text-[10px] text-muted-foreground">{group.members.length} members</span>
-                  <button
-                    type="button"
-                    onClick={() => { if (confirm(`Delete group "${group.name}"?`)) deleteMut.mutate(group.id); }}
-                    className="rounded-md p-1 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-                    aria-label="Delete group"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
                 </div>
 
                 {/* Members */}
