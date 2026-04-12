@@ -392,18 +392,38 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
 
           {/* Footer */}
           {data && !loading && (
-            <div className="flex items-center justify-between border-t border-border px-5 py-3">
-              <span className="text-[11px] tabular-nums text-muted-foreground">
+            <div className="border-t border-border px-5 py-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] text-muted-foreground shrink-0">Tone:</label>
+                <select
+                  value={toneOverride}
+                  onChange={(e) => setToneOverride(e.target.value)}
+                  className="flex-1 rounded-md border border-border bg-background px-2 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="">Default (from settings)</option>
+                  {(() => {
+                    const groups = [...new Set(TONE_OPTIONS.filter((t) => t.group).map((t) => t.group))];
+                    return groups.map((group) => (
+                      <optgroup key={group} label={group}>
+                        {TONE_OPTIONS.filter((t) => t.group === group).map((t) => (
+                          <option key={t.value} value={t.value}>{t.label}</option>
+                        ))}
+                      </optgroup>
+                    ));
+                  })()}
+                </select>
+                <button
+                  type="button"
+                  onClick={fetchSuggestions}
+                  className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 transition"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Regenerate
+                </button>
+              </div>
+              <span className="block text-[10px] tabular-nums text-muted-foreground">
                 ${data.cost.toFixed(4)} · {data.tokens.input + data.tokens.output} tokens · {data.model}
               </span>
-              <button
-                type="button"
-                onClick={fetchSuggestions}
-                className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition"
-              >
-                <RefreshCw className="h-3 w-3" />
-                Regenerate
-              </button>
             </div>
           )}
         </Dialog.Content>
