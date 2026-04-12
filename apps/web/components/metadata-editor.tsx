@@ -393,11 +393,12 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
       const person: Person = { kind: 'free', name: p.name };
       if (selected.some((s) => personKey(s) === personKey(person))) continue;
       seenNames.add(p.name.toLowerCase());
+      const isPet = p.entityType === 'PET';
       items.push({
         key: `p:${p.id}`,
         person,
         label: p.name,
-        sub: p.faceCount > 0 ? `${p.faceCount} faces` : undefined,
+        sub: isPet ? 'Pet' : p.faceCount > 0 ? `${p.faceCount} faces` : undefined,
       });
     }
 
@@ -450,7 +451,8 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   return (
     <div>
       <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-        <Users className="h-3 w-3" /> {field.name}
+        <Users className="h-3 w-3" />
+        {knownPersons.some((p) => p.entityType === 'PET') ? 'People & Pets' : field.name}
       </label>
 
       {/* Avatar quick-select grid */}
@@ -568,7 +570,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
           ref={inputRef}
           type="text"
           value={query}
-          placeholder={selected.length === 0 ? 'Add a person…' : 'Add another…'}
+          placeholder={selected.length === 0 ? 'Add a person or pet…' : 'Add another…'}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); setHighlight(0); }}
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 120)}

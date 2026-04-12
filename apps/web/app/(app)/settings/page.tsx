@@ -2227,7 +2227,8 @@ function PeopleManagementSection() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState<string>('');
-  const [linkingUserId, setLinkingUserId] = useState<string | null>(null); // Person ID being linked to a user
+  const [editEntityType, setEditEntityType] = useState<'PERSON' | 'PET'>('PERSON');
+  const [linkingUserId, setLinkingUserId] = useState<string | null>(null);
   const [mergeSelection, setMergeSelection] = useState<Set<string>>(new Set());
   const [merging, setMerging] = useState(false);
 
@@ -2273,11 +2274,11 @@ function PeopleManagementSection() {
   });
 
   const updateMut = useMutation({
-    mutationFn: async ({ id, name, gender }: { id: string; name: string; gender?: string }) => {
+    mutationFn: async ({ id, name, gender, entityType }: { id: string; name: string; gender?: string; entityType?: string }) => {
       const res = await fetch(`/api/persons/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, gender: gender || null }),
+        body: JSON.stringify({ name, gender: gender || null, ...(entityType ? { entityType } : {}) }),
       });
       if (!res.ok) throw new Error((await res.json()).message);
       return res.json();
@@ -2365,13 +2366,13 @@ function PeopleManagementSection() {
     <section>
       <SectionHeader
         icon={Users}
-        title="People"
-        description="Manage people that appear in your archive. People can be linked to app users or exist independently (e.g. family members, historical figures)."
+        title="People & Pets"
+        description="Manage people and pets that appear in your archive. People can be linked to app users or exist independently."
       />
 
       <div className="mt-4 flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
-          {people?.length ?? 0} {(people?.length ?? 0) === 1 ? 'person' : 'people'}
+          {people?.length ?? 0} {(people?.length ?? 0) === 1 ? 'entry' : 'entries'}
         </p>
         <div className="flex items-center gap-2">
           {mergeSelection.size >= 2 && (
@@ -2408,7 +2409,7 @@ function PeopleManagementSection() {
             onClick={() => setShowCreate(true)}
             className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
           >
-            Add person
+            Add person or pet
           </button>
         </div>
       </div>
@@ -2446,25 +2447,23 @@ function PeopleManagementSection() {
               className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
               autoFocus
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && newName.trim()) createMut.mutate();
+                if (e.key === 'Enter' && newName.trim()) createMut.mutate({});
                 if (e.key === 'Escape') setShowCreate(false);
               }}
             />
-            {newEntityType === 'PERSON' && (
-              <select
-                value={newGender}
-                onChange={(e) => setNewGender(e.target.value)}
-                className="rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-              >
-                <option value="">Gender</option>
-                <option value="MALE">Male</option>
-                <option value="FEMALE">Female</option>
-                <option value="OTHER">Other</option>
-              </select>
-            )}
+            <select
+              value={newGender}
+              onChange={(e) => setNewGender(e.target.value)}
+              className="rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="">Gender</option>
+              <option value="MALE">Male</option>
+              <option value="FEMALE">Female</option>
+              <option value="OTHER">Other</option>
+            </select>
             <button
               type="button"
-              onClick={() => newName.trim() && createMut.mutate()}
+              onClick={() => newName.trim() && createMut.mutate({})}
               disabled={!newName.trim() || createMut.isPending}
               className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
             >
@@ -2532,32 +2531,43 @@ function PeopleManagementSection() {
                     {/* Info */}
                     <div className="min-w-0 flex-1">
                       {isRecord && editingId === person.id ? (
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {/* Person/Pet toggle */}
+                          <div className="flex items-center rounded-md border border-border">
+                            <button type="button" onClick={() => setEditEntityType('PERSON')}
+                              className={cn('flex items-center gap-1 rounded-l-md px-2 py-1 text-[10px] font-medium',
+                                editEntityType === 'PERSON' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent')}>
+                              <Users className="h-2.5 w-2.5" /> Person
+                            </button>
+                            <button type="button" onClick={() => setEditEntityType('PET')}
+                              className={cn('flex items-center gap-1 rounded-r-md px-2 py-1 text-[10px] font-medium',
+                                editEntityType === 'PET' ? 'bg-amber-500 text-white' : 'text-muted-foreground hover:bg-accent')}>
+                              <PawPrint className="h-2.5 w-2.5" /> Pet
+                            </button>
+                          </div>
                           <input
                             value={editName}
                             onChange={(e) => setEditName(e.target.value)}
-                            className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                            className="flex-1 min-w-[120px] rounded-md border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
                             autoFocus
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && editName.trim()) updateMut.mutate({ id: person.id!, name: editName.trim(), gender: editGender });
+                              if (e.key === 'Enter' && editName.trim()) updateMut.mutate({ id: person.id!, name: editName.trim(), gender: editGender, entityType: editEntityType });
                               if (e.key === 'Escape') setEditingId(null);
                             }}
                           />
-                          {person.entityType !== 'PET' && (
-                            <select
-                              value={editGender}
-                              onChange={(e) => setEditGender(e.target.value)}
-                              className="rounded-md border border-border bg-background px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                            >
-                              <option value="">No gender</option>
-                              <option value="MALE">Male</option>
-                              <option value="FEMALE">Female</option>
-                              <option value="OTHER">Other</option>
-                            </select>
-                          )}
+                          <select
+                            value={editGender}
+                            onChange={(e) => setEditGender(e.target.value)}
+                            className="rounded-md border border-border bg-background px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            <option value="">Gender</option>
+                            <option value="MALE">Male</option>
+                            <option value="FEMALE">Female</option>
+                            <option value="OTHER">Other</option>
+                          </select>
                           <button
                             type="button"
-                            onClick={() => editName.trim() && updateMut.mutate({ id: person.id!, name: editName.trim(), gender: editGender })}
+                            onClick={() => editName.trim() && updateMut.mutate({ id: person.id!, name: editName.trim(), gender: editGender, entityType: editEntityType })}
                             disabled={updateMut.isPending || !editName.trim()}
                             className="text-xs text-primary hover:underline disabled:opacity-50"
                           >
@@ -2648,7 +2658,7 @@ function PeopleManagementSection() {
                           <>
                             <button
                               type="button"
-                              onClick={() => { setEditingId(person.id); setEditName(person.name ?? ''); setEditGender(person.gender ?? ''); }}
+                              onClick={() => { setEditingId(person.id); setEditName(person.name ?? ''); setEditGender(person.gender ?? ''); setEditEntityType(person.entityType ?? 'PERSON'); }}
                               className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
                               aria-label="Edit"
                             >
@@ -2698,7 +2708,7 @@ function PeopleManagementSection() {
             </div>
           ) : (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-              No people registered yet. Add people here or they will be created automatically when face detection runs.
+              No people or pets registered yet. Add them here or they will be created automatically when face detection runs.
             </p>
           )}
         </div>

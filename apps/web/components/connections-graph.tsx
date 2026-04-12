@@ -290,7 +290,7 @@ export default function ConnectionsGraph({ nodes: graphNodes, edges: graphEdges,
   const [layout, setLayout] = useState<'TB' | 'LR'>('TB');
 
   // Convert graph data to React Flow nodes/edges, then compute group boundaries
-  const { initialNodes, initialEdges, groupBounds } = useMemo(() => {
+  const { initialNodes, initialEdges } = useMemo(() => {
     const rfNodes: Node<PersonNodeData>[] = graphNodes.map((n) => ({
       id: n.id,
       type: 'person',
