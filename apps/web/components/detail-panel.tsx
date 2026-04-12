@@ -311,7 +311,7 @@ function FileDetail({ fileId }: { fileId: string }) {
         {/* EXIF / Camera info */}
         {(() => {
           const f = file.meta?.fields ?? {};
-          const hasExif = f.cameraMake || f.cameraModel || f.iso || f.aperture || f.shutterSpeed || f.focalLength || f.lensModel;
+          const hasExif = f.cameraMake || f.cameraModel || f.iso || f.aperture || f.shutterSpeed || f.focalLength || f.lensModel || f.exposureProgram || f.whiteBalance || f.flash != null || f.software || f.colorSpace;
           if (!hasExif) return null;
           const camera = [f.cameraMake, f.cameraModel].filter(Boolean).join(' ');
           return (
@@ -324,6 +324,11 @@ function FileDetail({ fileId }: { fileId: string }) {
               {f.focalLength != null && (
                 <InfoItem label="Focal" value={`${f.focalLength}mm${f.focalLength35mm ? ` (${f.focalLength35mm}mm)` : ''}`} />
               )}
+              {!!f.exposureProgram && <InfoItem label="Exposure" value={String(f.exposureProgram)} />}
+              {!!f.whiteBalance && <InfoItem label="White Bal." value={String(f.whiteBalance)} />}
+              {f.flash != null && <InfoItem label="Flash" value={f.flash ? 'Fired' : 'No flash'} />}
+              {!!f.colorSpace && <InfoItem label="Color" value={String(f.colorSpace)} />}
+              {!!f.software && <InfoItem label="Software" value={String(f.software)} />}
             </div>
           );
         })()}
@@ -349,9 +354,11 @@ function FileDetail({ fileId }: { fileId: string }) {
           if (f.gpsLatitude == null || f.gpsLongitude == null) return null;
           const lat = Number(f.gpsLatitude).toFixed(6);
           const lon = Number(f.gpsLongitude).toFixed(6);
+          const alt = f.gpsAltitude != null ? `${Number(f.gpsAltitude).toFixed(0)}m` : null;
           return (
-            <div className="border-t border-border/50 pt-2 text-xs">
+            <div className="border-t border-border/50 pt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
               <InfoItem label="Location" value={`${lat}, ${lon}`} />
+              {alt && <InfoItem label="Altitude" value={alt} />}
             </div>
           );
         })()}
@@ -392,6 +399,29 @@ function FileDetail({ fileId }: { fileId: string }) {
           )}
         </div>
       </div>
+
+      {/* Caption & Alt Text (read-only display when set) */}
+      {(() => {
+        const caption = file.meta?.fields?.caption as string | undefined;
+        const altText = file.meta?.fields?.altText as string | undefined;
+        if (!caption && !altText) return null;
+        return (
+          <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2 text-xs">
+            {caption && (
+              <div>
+                <span className="text-muted-foreground">Caption</span>
+                <p className="mt-0.5 text-foreground">{caption}</p>
+              </div>
+            )}
+            {altText && (
+              <div>
+                <span className="text-muted-foreground">Alt Text</span>
+                <p className="mt-0.5 text-foreground">{altText}</p>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Metadata editor with tags */}
       <div className="border-t border-border pt-3">

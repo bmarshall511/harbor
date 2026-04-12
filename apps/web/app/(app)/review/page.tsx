@@ -33,6 +33,10 @@ import {
   FolderOpen,
   Pencil,
   RefreshCw,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 
@@ -430,6 +434,19 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
   const category = getMimeCategory(file.mimeType);
   const hasPreview = category === 'image' || file.previews?.length > 0;
   const isVideo = category === 'video';
+
+  // Compute reasons from fresh file data so they update reactively
+  const reasons = useMemo(() => {
+    const r: string[] = [];
+    if (!file.title) r.push('Missing title');
+    if (!file.description) r.push('Missing description');
+    const manualTags = file.tags?.filter((t: any) => t.source === 'manual') ?? [];
+    if (manualTags.length === 0) r.push('No tags');
+    const meta = file.meta as { fields?: Record<string, unknown> } | null;
+    const people = meta?.fields?.people;
+    if (!Array.isArray(people) || people.length === 0) r.push('No people tagged');
+    return r;
+  }, [file.title, file.description, file.tags, file.meta]);
   const openViewer = useAppStore((s) => s.openViewer);
   const queryClient = useQueryClient();
   const [showRename, setShowRename] = useState(false);
@@ -448,9 +465,9 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
       {/* Left: Large preview */}
       <div className="flex flex-1 flex-col bg-muted/20 overflow-hidden min-w-0">
         {/* Priority reasons chips */}
-        {item.reasons.length > 0 && (
+        {reasons.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-4 pt-3 pb-1 shrink-0">
-            {item.reasons.map((reason, i) => (
+            {reasons.map((reason, i) => (
               <span
                 key={i}
                 className="rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
@@ -481,28 +498,7 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
               </div>
             </button>
           ) : isVideo ? (
-            <button
-              onClick={() => openViewer(file.id, [file])}
-              className="group relative cursor-pointer max-h-full max-w-full flex items-center justify-center"
-            >
-              {file.previews?.length > 0 ? (
-                <img
-                  src={getPreviewUrl(file.id, 'LARGE')}
-                  alt={file.name}
-                  className="max-h-full max-w-full rounded-lg object-contain shadow-lg"
-                  loading="eager"
-                />
-              ) : (
-                <div className="flex h-64 w-96 items-center justify-center rounded-lg bg-gradient-to-b from-purple-500/10 to-purple-500/5 border border-border">
-                  <FileVideo className="h-16 w-16 text-purple-400/40" />
-                </div>
-              )}
-              <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/0 group-hover:bg-black/10 transition-colors">
-                <div className="rounded-full bg-black/50 p-3 opacity-80 group-hover:opacity-100 transition-opacity">
-                  <Maximize2 className="h-5 w-5 text-white" />
-                </div>
-              </div>
-            </button>
+            <ReviewVideoPlayer file={file} onOpenViewer={() => openViewer(file.id, [file])} />
           ) : (
             <div className="flex h-48 w-72 flex-col items-center justify-center rounded-lg border border-border bg-muted">
               <FileIconLarge mimeType={file.mimeType} />
@@ -581,22 +577,27 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
           {file.meta?.fields?.aperture != null && <InfoItem label="Aperture" value={`f/${file.meta.fields.aperture}`} />}
           {!!file.meta?.fields?.shutterSpeed && <InfoItem label="Shutter" value={`${String(file.meta.fields.shutterSpeed)}s`} />}
           {file.meta?.fields?.focalLength != null && (
-            <InfoItem label="Focal" value={`${file.meta.fields.focalLength}mm`} />
+            <InfoItem label="Focal" value={`${file.meta.fields.focalLength}mm${file.meta.fields.focalLength35mm ? ` (${file.meta.fields.focalLength35mm}mm)` : ''}`} />
           )}
+          {!!file.meta?.fields?.exposureProgram && <InfoItem label="Exposure" value={String(file.meta.fields.exposureProgram)} />}
+          {!!file.meta?.fields?.whiteBalance && <InfoItem label="White Bal." value={String(file.meta.fields.whiteBalance)} />}
+          {file.meta?.fields?.flash != null && <InfoItem label="Flash" value={file.meta.fields.flash ? 'Fired' : 'No flash'} />}
+          {!!file.meta?.fields?.colorSpace && <InfoItem label="Color" value={String(file.meta.fields.colorSpace)} />}
+          {!!file.meta?.fields?.software && <InfoItem label="Software" value={String(file.meta.fields.software)} />}
           {!!file.meta?.fields?.dateTaken && (
             <InfoItem label="Taken" value={new Date(String(file.meta.fields.dateTaken)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />
           )}
           {file.fileCreatedAt && (
-            <InfoItem
-              label="Created"
-              value={new Date(file.fileCreatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-            />
+            <InfoItem label="Created" value={new Date(file.fileCreatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />
           )}
           {file.fileModifiedAt && (
-            <InfoItem
-              label="Modified"
-              value={new Date(file.fileModifiedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-            />
+            <InfoItem label="Modified" value={new Date(file.fileModifiedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />
+          )}
+          {file.meta?.fields?.gpsLatitude != null && file.meta?.fields?.gpsLongitude != null && (
+            <InfoItem label="Location" value={`${Number(file.meta.fields.gpsLatitude).toFixed(6)}, ${Number(file.meta.fields.gpsLongitude).toFixed(6)}`} />
+          )}
+          {file.meta?.fields?.gpsAltitude != null && (
+            <InfoItem label="Altitude" value={`${Number(file.meta.fields.gpsAltitude).toFixed(0)}m`} />
           )}
         </div>
 
@@ -637,6 +638,232 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
           fileModifiedAt={file.fileModifiedAt}
           onClose={() => setShowRename(false)}
         />
+      )}
+    </div>
+  );
+}
+
+// ─── Review Video Player ──────────────────────────────────────
+
+function ReviewVideoPlayer({ file, onOpenViewer }: { file: FileDto; onOpenViewer: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const queryClient = useQueryClient();
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState(false);
+
+  // Check if Dropbox file is streamable
+  const { data: cacheState, isLoading: cacheLoading } = useQuery({
+    queryKey: ['file-cache', file.id],
+    queryFn: () => filesApi.cacheStatus(file.id),
+    staleTime: 30_000,
+  });
+
+  const isDropbox = cacheState?.providerType === 'DROPBOX';
+  const isStreamable = !isDropbox || cacheState?.streamable === true;
+
+  // Auto-download Dropbox files for streaming
+  const [downloadElapsed, setDownloadElapsed] = useState(0);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const elapsedRef = useRef<number | null>(null);
+
+  const downloadMutation = useMutation({
+    mutationFn: async () => {
+      setDownloadError(null);
+      setDownloadElapsed(0);
+      elapsedRef.current = window.setInterval(() => {
+        setDownloadElapsed((s) => s + 1);
+      }, 1000);
+      try {
+        return await filesApi.cacheOffline(file.id);
+      } finally {
+        if (elapsedRef.current) window.clearInterval(elapsedRef.current);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['file-cache', file.id] });
+    },
+    onError: (err: Error) => {
+      setDownloadError(err.message || 'Download failed');
+      setDownloadElapsed(0);
+    },
+  });
+
+  // Auto-trigger download when we detect a non-streamable Dropbox file
+  const autoTriggeredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isDropbox && !isStreamable && !cacheLoading && !downloadMutation.isPending && autoTriggeredRef.current !== file.id) {
+      autoTriggeredRef.current = file.id;
+      downloadMutation.mutate();
+    }
+  }, [isDropbox, isStreamable, cacheLoading, file.id, downloadMutation]);
+
+  function togglePlay() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) void v.play();
+    else v.pause();
+  }
+
+  function seek(e: React.MouseEvent<HTMLDivElement>) {
+    const v = videoRef.current;
+    if (!v || !duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    v.currentTime = pct * duration;
+  }
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const fmt = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  // Loading cache state
+  if (cacheLoading) {
+    return (
+      <div className="flex h-64 w-96 items-center justify-center rounded-lg border border-border bg-muted/30">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // Non-streamable: show thumbnail + download progress
+  if (!isStreamable || error) {
+    const downloading = downloadMutation.isPending;
+
+    return (
+      <div className="relative max-h-full max-w-full flex items-center justify-center">
+        {/* Thumbnail background */}
+        {file.previews?.length > 0 ? (
+          <img
+            src={getPreviewUrl(file.id, 'LARGE')}
+            alt={file.name}
+            className="max-h-full max-w-full rounded-lg object-contain shadow-lg opacity-40"
+          />
+        ) : (
+          <div className="flex h-64 w-96 items-center justify-center rounded-lg bg-gradient-to-b from-purple-500/10 to-purple-500/5 border border-border">
+            <FileVideo className="h-16 w-16 text-purple-400/40" />
+          </div>
+        )}
+
+        {/* Overlay with status */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg">
+          {downloading ? (
+            <div className="w-64 text-center">
+              <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+              <p className="mt-3 text-sm font-medium text-foreground">Downloading from Dropbox</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {formatBytes(Number(file.size))} &middot; {downloadElapsed}s elapsed
+              </p>
+              {/* Indeterminate progress bar */}
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="h-full w-1/3 animate-[shimmer_1.2s_ease-in-out_infinite] rounded-full bg-primary" />
+              </div>
+            </div>
+          ) : downloadError ? (
+            <div className="w-64 text-center">
+              <p className="text-sm font-medium text-destructive">Download failed</p>
+              <p className="mt-1 text-xs text-muted-foreground">{downloadError}</p>
+              <button
+                onClick={() => downloadMutation.mutate()}
+                className="mt-3 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Try again
+              </button>
+            </div>
+          ) : error ? (
+            <div className="w-64 text-center">
+              <FileVideo className="mx-auto h-10 w-10 text-muted-foreground/30" />
+              <p className="mt-2 text-sm text-muted-foreground">Cannot play this video</p>
+              <button
+                onClick={onOpenViewer}
+                className="mt-3 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Open in viewer
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group relative max-h-full max-w-full flex items-center justify-center">
+      <video
+        ref={videoRef}
+        key={file.id}
+        src={`/api/files/${file.id}/stream`}
+        muted={muted}
+        playsInline
+        preload="metadata"
+        poster={file.previews?.length > 0 ? getPreviewUrl(file.id, 'LARGE') : undefined}
+        className={cn(
+          'max-h-full max-w-full rounded-lg shadow-lg cursor-pointer',
+          !ready && 'opacity-50',
+        )}
+        onClick={togglePlay}
+        onCanPlay={() => setReady(true)}
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime || 0)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onError={() => setError(true)}
+      />
+
+      {/* Play overlay when paused */}
+      {!playing && ready && (
+        <div
+          className="absolute inset-0 flex items-center justify-center rounded-lg cursor-pointer"
+          onClick={togglePlay}
+        >
+          <div className="rounded-full bg-black/50 p-4 backdrop-blur-sm">
+            <Play className="h-8 w-8 text-white fill-white" />
+          </div>
+        </div>
+      )}
+
+      {/* Controls bar */}
+      {ready && (
+        <div className="absolute inset-x-3 bottom-3 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+          <div className="flex items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 backdrop-blur-md ring-1 ring-white/10">
+            {/* Play/pause */}
+            <button onClick={togglePlay} className="text-white/80 hover:text-white">
+              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-white" />}
+            </button>
+
+            {/* Progress bar */}
+            <div
+              className="flex-1 h-1 rounded-full bg-white/20 cursor-pointer relative"
+              onClick={seek}
+            >
+              <div
+                className="h-full rounded-full bg-white/80 transition-[width] duration-100"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+
+            {/* Time */}
+            <span className="text-[10px] text-white/60 tabular-nums shrink-0">
+              {fmt(currentTime)} / {fmt(duration)}
+            </span>
+
+            {/* Mute */}
+            <button onClick={() => setMuted((m) => !m)} className="text-white/80 hover:text-white">
+              {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+            </button>
+
+            {/* Fullscreen / lightbox */}
+            <button onClick={onOpenViewer} className="text-white/80 hover:text-white" title="Open in viewer">
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
