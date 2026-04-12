@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@harbor/database';
-import { requireAuth, requirePermission } from '@/lib/auth';
-import { randomUUID } from 'node:crypto';
+import { requireAuth, requirePermission, getAuthServiceForRoute } from '@/lib/auth';
 
 /**
  * POST /api/admin/impersonate — Login as another user.
@@ -23,16 +22,10 @@ export async function POST(request: Request) {
   const targetUser = await db.user.findUnique({ where: { id: userId } });
   if (!targetUser) return NextResponse.json({ message: 'User not found' }, { status: 404 });
 
-  // Create a session for the target user
-  const token = randomUUID();
-  await db.session.create({
-    data: {
-      userId: targetUser.id,
-      token,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      userAgent: request.headers.get('user-agent') ?? null,
-    },
-  });
+  // Create a proper JWT session for the target user via AuthService
+  const authService = await getAuthServiceForRoute();
+  const session = await authService.createSession(targetUser.id);
+  const token = session.token;
 
   // Store the admin's current session and the new token in a temporary
   // record so the GET redirect can set both cookies in one response.
