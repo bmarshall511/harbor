@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { files as filesApi, folders as foldersApi, users as usersApi } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Pencil, Save, X, Star, Users, UserPlus, Check, PawPrint, User } from 'lucide-react';
+import { AiSuggestButton } from '@/components/ai-suggest-button';
 import { toast } from 'sonner';
 import { TagEditor } from '@/components/tag-editor';
 import type { FileDto, FolderDto } from '@harbor/types';
@@ -157,10 +158,19 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
           // Text / textarea fields
           const value = getFieldValue(field.key);
           if (editing) {
+            const isAiEligible = field.key === 'title' && file.mimeType?.startsWith('image/');
             return (
               <EditField key={field.key} label={field.name}
                 value={formData[field.key] ?? ''} onChange={(v) => setField(field.key, v)}
-                multiline={field.fieldType === 'textarea'} />
+                multiline={field.fieldType === 'textarea'}
+                aiButton={isAiEligible ? (
+                  <AiSuggestButton
+                    fileId={file.id}
+                    field="title"
+                    onSelect={(v) => setField(field.key, v)}
+                  />
+                ) : undefined}
+              />
             );
           }
 
@@ -749,10 +759,19 @@ function MetaField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EditField({ label, value, onChange, multiline }: { label: string; value: string; onChange: (v: string) => void; multiline?: boolean }) {
+function EditField({ label, value, onChange, multiline, aiButton }: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  multiline?: boolean;
+  aiButton?: React.ReactNode;
+}) {
   return (
     <div>
-      <label className="mb-1 block text-[11px] font-medium text-muted-foreground">{label}</label>
+      <div className="mb-1 flex items-center justify-between">
+        <label className="text-[11px] font-medium text-muted-foreground">{label}</label>
+        {aiButton}
+      </div>
       {multiline ? (
         <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={2}
           className="w-full rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring resize-none" />

@@ -2043,8 +2043,150 @@ function AiSettingsSection() {
           onToggleFace={(on) => saveMutation.mutate({ 'ai.faceRecognition': on ? 'true' : 'false' })}
           hasOpenAiKey={secretStatus?.['openai.apiKey'] ?? false}
         />
+
+        {/* Content Generation Settings */}
+        <div className="rounded-lg border border-border p-4 space-y-4">
+          <div>
+            <p className="text-sm font-medium">Content Generation</p>
+            <p className="text-xs text-muted-foreground">AI-powered title suggestions, descriptions, and auto-tagging for images</p>
+          </div>
+
+          {aiEnabled && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">AI Model</label>
+                <select
+                  value={settings?.['ai.defaultModel'] ?? 'gpt-4o'}
+                  onChange={(e) => saveMutation.mutate({ 'ai.defaultModel': e.target.value })}
+                  className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <optgroup label="OpenAI">
+                    <option value="gpt-4o">GPT-4o (best quality, ~$0.01/image)</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini (faster, ~$0.002/image)</option>
+                  </optgroup>
+                  <optgroup label="Anthropic">
+                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (~$0.01/image)</option>
+                  </optgroup>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">Tone</label>
+                <select
+                  value={settings?.['ai.title.tone'] ?? 'descriptive'}
+                  onChange={(e) => saveMutation.mutate({ 'ai.title.tone': e.target.value })}
+                  className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="descriptive">Descriptive</option>
+                  <option value="professional">Professional</option>
+                  <option value="casual">Casual</option>
+                  <option value="minimal">Minimal</option>
+                  <option value="creative">Creative</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">Max title length</label>
+                <input
+                  type="number"
+                  min={20}
+                  max={200}
+                  value={settings?.['ai.title.maxLength'] ?? '80'}
+                  onChange={(e) => saveMutation.mutate({ 'ai.title.maxLength': e.target.value })}
+                  className="w-20 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">Suggestions per request</label>
+                <input
+                  type="number"
+                  min={2}
+                  max={6}
+                  value={settings?.['ai.title.suggestionCount'] ?? '4'}
+                  onChange={(e) => saveMutation.mutate({ 'ai.title.suggestionCount': e.target.value })}
+                  className="w-20 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Archive context (optional)</label>
+                <textarea
+                  value={settings?.['ai.title.systemContext'] ?? ''}
+                  onChange={(e) => saveMutation.mutate({ 'ai.title.systemContext': e.target.value })}
+                  placeholder="e.g. This archive contains family photos from the Marshall family, taken between 2010-2024. People include Ben, Angel, Robin, and Andy."
+                  rows={3}
+                  className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Providing context about your archive helps the AI generate more relevant titles, descriptions, and tags.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {!aiEnabled && (
+            <p className="text-[11px] text-amber-600">Enable AI features above to configure content generation.</p>
+          )}
+        </div>
+
+        {/* AI Usage Dashboard */}
+        {aiEnabled && <AiUsageDashboard />}
       </div>
     </section>
+  );
+}
+
+function AiUsageDashboard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['ai-usage'],
+    queryFn: async () => {
+      const res = await fetch('/api/admin/ai-usage');
+      if (!res.ok) return null;
+      return res.json() as Promise<{
+        totalJobs: number;
+        totalCost: number;
+        totalInputTokens: number;
+        totalOutputTokens: number;
+        byPurpose: Record<string, { count: number; cost: number }>;
+        recent: Array<{ id: string; purpose: string; provider: string; model: string; cost: number | null; elapsedMs: number | null; status: string; createdAt: string }>;
+      }>;
+    },
+    staleTime: 30_000,
+  });
+
+  if (isLoading || !data) return null;
+  if (data.totalJobs === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-border p-4 space-y-3">
+      <p className="text-sm font-medium">AI Usage</p>
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-md bg-muted/40 p-2.5 text-center">
+          <p className="text-lg font-bold tabular-nums">{data.totalJobs}</p>
+          <p className="text-[10px] text-muted-foreground">Total requests</p>
+        </div>
+        <div className="rounded-md bg-muted/40 p-2.5 text-center">
+          <p className="text-lg font-bold tabular-nums">${data.totalCost.toFixed(3)}</p>
+          <p className="text-[10px] text-muted-foreground">Estimated cost</p>
+        </div>
+        <div className="rounded-md bg-muted/40 p-2.5 text-center">
+          <p className="text-lg font-bold tabular-nums">{((data.totalInputTokens + data.totalOutputTokens) / 1000).toFixed(1)}k</p>
+          <p className="text-[10px] text-muted-foreground">Total tokens</p>
+        </div>
+      </div>
+      {Object.keys(data.byPurpose).length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">By purpose</p>
+          {Object.entries(data.byPurpose).map(([purpose, stats]) => (
+            <div key={purpose} className="flex items-center justify-between text-xs">
+              <span className="capitalize">{purpose.replace(/_/g, ' ')}</span>
+              <span className="tabular-nums text-muted-foreground">{stats.count} requests · ${stats.cost.toFixed(3)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
