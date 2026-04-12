@@ -56,9 +56,17 @@ interface GraphEdge {
   isBidirectional: boolean;
 }
 
+interface GraphGroup {
+  id: string;
+  name: string;
+  color: string | null;
+  memberIds: string[];
+}
+
 interface ConnectionsGraphProps {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  groups: GraphGroup[];
 }
 
 // ─── Edge color mapping ──────────────────────────────────────────────────────
@@ -243,18 +251,46 @@ function RelationshipEdge({
   );
 }
 
+// ─── Group Boundary Node ─────────────────────────────────────────────────────
+
+type GroupBoundaryData = { name: string; color: string; width: number; height: number };
+
+function GroupBoundaryNode({ data }: NodeProps<Node<GroupBoundaryData>>) {
+  return (
+    <div
+      className="rounded-2xl border-2 border-dashed pointer-events-none"
+      style={{
+        width: data.width,
+        height: data.height,
+        borderColor: `${data.color}40`,
+        backgroundColor: `${data.color}08`,
+      }}
+    >
+      <span
+        className="absolute -top-3 left-3 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+        style={{
+          color: data.color,
+          backgroundColor: `${data.color}15`,
+        }}
+      >
+        {data.name}
+      </span>
+    </div>
+  );
+}
+
 // ─── Node types registry ─────────────────────────────────────────────────────
 
-const nodeTypes = { person: PersonNode };
+const nodeTypes = { person: PersonNode, 'group-boundary': GroupBoundaryNode };
 const edgeTypes = { relationship: RelationshipEdge };
 
 // ─── Main Graph Component ────────────────────────────────────────────────────
 
-export default function ConnectionsGraph({ nodes: graphNodes, edges: graphEdges }: ConnectionsGraphProps) {
+export default function ConnectionsGraph({ nodes: graphNodes, edges: graphEdges, groups }: ConnectionsGraphProps) {
   const [layout, setLayout] = useState<'TB' | 'LR'>('TB');
 
-  // Convert graph data to React Flow nodes/edges
-  const { initialNodes, initialEdges } = useMemo(() => {
+  // Convert graph data to React Flow nodes/edges, then compute group boundaries
+  const { initialNodes, initialEdges, groupBounds } = useMemo(() => {
     const rfNodes: Node<PersonNodeData>[] = graphNodes.map((n) => ({
       id: n.id,
       type: 'person',
@@ -281,8 +317,51 @@ export default function ConnectionsGraph({ nodes: graphNodes, edges: graphEdges 
     }));
 
     const layouted = getLayoutedElements(rfNodes, rfEdges, layout);
-    return { initialNodes: layouted.nodes, initialEdges: layouted.edges };
-  }, [graphNodes, graphEdges, layout]);
+
+    // Compute bounding boxes for groups based on member node positions
+    const nodePositions = new Map(layouted.nodes.map((n) => [n.id, n.position]));
+    const bounds = groups
+      .filter((g) => g.memberIds.length > 0)
+      .map((g) => {
+        const memberPositions = g.memberIds
+          .map((id) => nodePositions.get(id))
+          .filter(Boolean) as Array<{ x: number; y: number }>;
+        if (memberPositions.length === 0) return null;
+
+        const pad = 30;
+        const minX = Math.min(...memberPositions.map((p) => p.x)) - pad;
+        const minY = Math.min(...memberPositions.map((p) => p.y)) - pad;
+        const maxX = Math.max(...memberPositions.map((p) => p.x)) + 160 + pad;
+        const maxY = Math.max(...memberPositions.map((p) => p.y)) + 120 + pad;
+
+        return {
+          id: g.id,
+          name: g.name,
+          color: g.color ?? '#6b7280',
+          x: minX,
+          y: minY,
+          width: maxX - minX,
+          height: maxY - minY,
+        };
+      })
+      .filter(Boolean) as Array<{ id: string; name: string; color: string; x: number; y: number; width: number; height: number }>;
+
+    // Create group background nodes (rendered behind person nodes)
+    const groupNodes: Node[] = bounds.map((b) => ({
+      id: `group-${b.id}`,
+      type: 'group-boundary',
+      position: { x: b.x, y: b.y },
+      data: { name: b.name, color: b.color, width: b.width, height: b.height },
+      selectable: false,
+      draggable: false,
+      style: { zIndex: -1 },
+    }));
+
+    return {
+      initialNodes: [...groupNodes, ...layouted.nodes],
+      initialEdges: layouted.edges,
+    };
+  }, [graphNodes, graphEdges, groups, layout]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);

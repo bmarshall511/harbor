@@ -64,6 +64,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ nodes, edges, groups: groupsData });
   } catch (err) {
     console.error('[Connections] GET failed:', err);
-    return NextResponse.json({ nodes: [], edges: [], groups: [] });
+    const message = err instanceof Error ? err.message : 'Failed to load connections';
+    return NextResponse.json({ message }, { status: 500 });
   }
 }

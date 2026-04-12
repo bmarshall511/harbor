@@ -59,7 +59,7 @@ export default function ConnectionsPage() {
 
   return (
     <div className="h-full w-full">
-      <ConnectionsGraph nodes={data.nodes} edges={data.edges} />
+      <ConnectionsGraph nodes={data.nodes} edges={data.edges} groups={data.groups ?? []} />
     </div>
   );
 }

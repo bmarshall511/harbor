@@ -2226,6 +2226,7 @@ function PeopleManagementSection() {
   const [newGender, setNewGender] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [editGender, setEditGender] = useState<string>('');
   const [mergeSelection, setMergeSelection] = useState<Set<string>>(new Set());
   const [merging, setMerging] = useState(false);
 
@@ -2238,6 +2239,7 @@ function PeopleManagementSection() {
         name: string | null;
         avatarUrl: string | null;
         entityType?: 'PERSON' | 'PET';
+        gender?: 'MALE' | 'FEMALE' | 'OTHER' | null;
         isConfirmed: boolean;
         faceCount: number;
         linkedUser: { id: string; username: string; displayName: string } | null;
@@ -2270,11 +2272,11 @@ function PeopleManagementSection() {
   });
 
   const updateMut = useMutation({
-    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+    mutationFn: async ({ id, name, gender }: { id: string; name: string; gender?: string }) => {
       const res = await fetch(`/api/persons/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, gender: gender || null }),
       });
       if (!res.ok) throw new Error((await res.json()).message);
       return res.json();
@@ -2536,16 +2538,29 @@ function PeopleManagementSection() {
                             className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
                             autoFocus
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && editName.trim()) updateMut.mutate({ id: person.id!, name: editName.trim() });
+                              if (e.key === 'Enter' && editName.trim()) updateMut.mutate({ id: person.id!, name: editName.trim(), gender: editGender });
                               if (e.key === 'Escape') setEditingId(null);
                             }}
                           />
+                          {person.entityType !== 'PET' && (
+                            <select
+                              value={editGender}
+                              onChange={(e) => setEditGender(e.target.value)}
+                              className="rounded-md border border-border bg-background px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                            >
+                              <option value="">No gender</option>
+                              <option value="MALE">Male</option>
+                              <option value="FEMALE">Female</option>
+                              <option value="OTHER">Other</option>
+                            </select>
+                          )}
                           <button
                             type="button"
-                            onClick={() => editName.trim() && updateMut.mutate({ id: person.id!, name: editName.trim() })}
-                            className="text-xs text-primary hover:underline"
+                            onClick={() => editName.trim() && updateMut.mutate({ id: person.id!, name: editName.trim(), gender: editGender })}
+                            disabled={updateMut.isPending || !editName.trim()}
+                            className="text-xs text-primary hover:underline disabled:opacity-50"
                           >
-                            Save
+                            {updateMut.isPending ? 'Saving...' : 'Save'}
                           </button>
                           <button
                             type="button"
@@ -2563,6 +2578,15 @@ function PeopleManagementSection() {
                               <span className="flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-600">
                                 <PawPrint className="h-2 w-2" /> Pet
                               </span>
+                            )}
+                            {person.gender === 'MALE' && (
+                              <span className="rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-medium text-blue-600">M</span>
+                            )}
+                            {person.gender === 'FEMALE' && (
+                              <span className="rounded-full bg-pink-500/10 px-1.5 py-0.5 text-[9px] font-medium text-pink-600">F</span>
+                            )}
+                            {person.gender === 'OTHER' && (
+                              <span className="rounded-full bg-purple-500/10 px-1.5 py-0.5 text-[9px] font-medium text-purple-600">O</span>
                             )}
                             {!isRecord && (
                               <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-600">
@@ -2625,7 +2649,7 @@ function PeopleManagementSection() {
                           <>
                             <button
                               type="button"
-                              onClick={() => { setEditingId(person.id); setEditName(person.name ?? ''); }}
+                              onClick={() => { setEditingId(person.id); setEditName(person.name ?? ''); setEditGender(person.gender ?? ''); }}
                               className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
                               aria-label="Edit"
                             >
