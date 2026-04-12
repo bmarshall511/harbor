@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@harbor/database';
 import { requireAuth, requirePermission } from '@/lib/auth';
 
-const PERSON_SELECT = { id: true, name: true, avatarUrl: true, entityType: true };
+const PERSON_SELECT = { id: true, name: true, avatarUrl: true, entityType: true, gender: true };
 
 /**
  * Relationship type mapping for auto-reciprocals.

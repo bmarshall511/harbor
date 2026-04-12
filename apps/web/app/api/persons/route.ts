@@ -67,6 +67,7 @@ export async function GET(request: Request) {
       name: p.name,
       avatarUrl: p.avatarUrl ?? p.linkedUser?.avatarUrl ?? null,
       entityType: p.entityType ?? 'PERSON',
+      gender: p.gender ?? null,
       isConfirmed: p.isConfirmed,
       faceCount: p._count.faces,
       linkedUser: p.linkedUser
@@ -80,6 +81,7 @@ export async function GET(request: Request) {
       name: m.name,
       avatarUrl: null as string | null,
       entityType: 'PERSON' as const,
+      gender: null as string | null,
       isConfirmed: false,
       faceCount: 0,
       linkedUser: null as { id: string; username: string; displayName: string } | null,
@@ -108,7 +110,7 @@ export async function POST(request: Request) {
   const denied = requirePermission(auth, 'admin', 'manage');
   if (denied) return denied;
 
-  const { name, linkedUserId, entityType } = await request.json();
+  const { name, linkedUserId, entityType, gender } = await request.json();
   if (!name?.trim()) {
     return NextResponse.json({ message: 'Name is required' }, { status: 400 });
   }
@@ -119,6 +121,7 @@ export async function POST(request: Request) {
       isConfirmed: true,
       ...(linkedUserId ? { linkedUserId } : {}),
       ...(entityType === 'PET' ? { entityType: 'PET' } : {}),
+      ...(gender ? { gender } : {}),
     },
   });
 

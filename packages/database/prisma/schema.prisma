@@ -495,12 +495,19 @@ enum PersonEntityType {
   PET
 }
 
+enum PersonGender {
+  MALE
+  FEMALE
+  OTHER
+}
+
 model Person {
   id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String?
   avatarUrl   String?          @map("avatar_url") // Admin-uploaded or auto-generated from best face crop
   linkedUserId String?         @unique @map("linked_user_id") @db.Uuid // Optional link to a registered User
   entityType  PersonEntityType @default(PERSON) @map("entity_type")
+  gender      PersonGender?    @map("gender")
   isConfirmed Boolean          @default(false) @map("is_confirmed")
   createdAt   DateTime         @default(now()) @map("created_at")
   updatedAt   DateTime         @updatedAt @map("updated_at")

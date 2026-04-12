@@ -42,6 +42,7 @@ interface GraphNode {
   name: string | null;
   avatarUrl: string | null;
   entityType: string;
+  gender: string | null;
   faceCount: number;
   relationshipCount: number;
 }
@@ -90,12 +91,26 @@ type PersonNodeData = {
   name: string;
   avatarUrl: string | null;
   entityType: string;
+  gender: string | null;
   relationshipCount: number;
 };
+
+/** Border/accent color based on gender. */
+function genderColor(gender: string | null): { border: string; bg: string; text: string } {
+  switch (gender) {
+    case 'MALE': return { border: 'border-blue-400/60', bg: 'bg-blue-50 dark:bg-blue-950/30', text: 'text-blue-500' };
+    case 'FEMALE': return { border: 'border-pink-400/60', bg: 'bg-pink-50 dark:bg-pink-950/30', text: 'text-pink-500' };
+    case 'OTHER': return { border: 'border-purple-400/60', bg: 'bg-purple-50 dark:bg-purple-950/30', text: 'text-purple-500' };
+    default: return { border: 'border-border', bg: 'bg-card', text: 'text-muted-foreground' };
+  }
+}
 
 function PersonNode({ data, selected }: NodeProps<Node<PersonNodeData>>) {
   const router = useRouter();
   const isPet = data.entityType === 'PET';
+  const gc = isPet
+    ? { border: 'border-amber-400/60', bg: 'bg-amber-50 dark:bg-amber-950/30', text: 'text-amber-500' }
+    : genderColor(data.gender);
   const prefersReducedMotion = typeof window !== 'undefined'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -117,13 +132,14 @@ function PersonNode({ data, selected }: NodeProps<Node<PersonNodeData>>) {
       )}
       title={`View ${data.name}'s files`}
     >
-      {/* Avatar */}
+      {/* Avatar with gender-colored border */}
       <div className={cn(
         'relative flex items-center justify-center overflow-hidden transition-all duration-200',
         'shadow-md group-hover:shadow-xl group-hover:scale-105',
-        isPet
-          ? 'h-16 w-16 rounded-2xl border-2 border-amber-400/50 bg-amber-50 dark:bg-amber-950/30'
-          : 'h-16 w-16 rounded-full border-2 border-border bg-card',
+        isPet ? 'h-16 w-16 rounded-2xl' : 'h-16 w-16 rounded-full',
+        'border-[3px]',
+        gc.border,
+        gc.bg,
         selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
       )}>
         {data.avatarUrl ? (
@@ -133,12 +149,12 @@ function PersonNode({ data, selected }: NodeProps<Node<PersonNodeData>>) {
             className={cn('h-full w-full object-cover', isPet ? 'rounded-2xl' : 'rounded-full')}
           />
         ) : isPet ? (
-          <PawPrint className="h-6 w-6 text-amber-500" />
+          <PawPrint className={cn('h-6 w-6', gc.text)} />
         ) : (
-          <User className="h-6 w-6 text-muted-foreground" />
+          <User className={cn('h-6 w-6', gc.text)} />
         )}
 
-        {/* Pet badge on person nodes that are pets */}
+        {/* Pet badge */}
         {isPet && data.avatarUrl && (
           <div className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 shadow-sm">
             <PawPrint className="h-2.5 w-2.5 text-white" />
@@ -155,7 +171,7 @@ function PersonNode({ data, selected }: NodeProps<Node<PersonNodeData>>) {
 
       {/* Name */}
       <span className={cn(
-        'max-w-[120px] truncate text-center text-xs font-medium',
+        'max-w-[130px] truncate text-center text-xs font-medium',
         'text-foreground group-hover:text-primary transition-colors',
       )}>
         {data.name}
@@ -239,7 +255,7 @@ export default function ConnectionsGraph({ nodes: graphNodes, edges: graphEdges 
 
   // Convert graph data to React Flow nodes/edges
   const { initialNodes, initialEdges } = useMemo(() => {
-    const rfNodes: Node<PersonNodeData>[] = graphNodes.map((n, i) => ({
+    const rfNodes: Node<PersonNodeData>[] = graphNodes.map((n) => ({
       id: n.id,
       type: 'person',
       position: { x: 0, y: 0 },
@@ -247,6 +263,7 @@ export default function ConnectionsGraph({ nodes: graphNodes, edges: graphEdges 
         name: n.name ?? 'Unknown',
         avatarUrl: n.avatarUrl,
         entityType: n.entityType,
+        gender: n.gender,
         relationshipCount: n.relationshipCount,
       },
     }));
@@ -303,7 +320,11 @@ export default function ConnectionsGraph({ nodes: graphNodes, edges: graphEdges 
           maskColor="var(--background)"
           nodeColor={(n) => {
             const d = n.data as PersonNodeData | undefined;
-            return d?.entityType === 'PET' ? '#f59e0b' : 'var(--primary)';
+            if (d?.entityType === 'PET') return '#f59e0b';
+            if (d?.gender === 'MALE') return '#3b82f6';
+            if (d?.gender === 'FEMALE') return '#ec4899';
+            if (d?.gender === 'OTHER') return '#a855f7';
+            return 'var(--primary)';
           }}
         />
       </ReactFlow>

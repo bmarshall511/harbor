@@ -20,6 +20,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       ...(body.linkedUserId !== undefined ? { linkedUserId: body.linkedUserId || null } : {}),
       ...(body.isConfirmed !== undefined ? { isConfirmed: body.isConfirmed } : {}),
       ...(body.entityType !== undefined ? { entityType: body.entityType } : {}),
+      ...(body.gender !== undefined ? { gender: body.gender || null } : {}),
     },
   });
 

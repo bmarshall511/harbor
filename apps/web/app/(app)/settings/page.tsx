@@ -2223,6 +2223,7 @@ function PeopleManagementSection() {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newEntityType, setNewEntityType] = useState<'PERSON' | 'PET'>('PERSON');
+  const [newGender, setNewGender] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [mergeSelection, setMergeSelection] = useState<Set<string>>(new Set());
@@ -2253,7 +2254,7 @@ function PeopleManagementSection() {
       const res = await fetch('/api/persons', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: personName, entityType: opts?.entityType ?? newEntityType }),
+        body: JSON.stringify({ name: personName, entityType: opts?.entityType ?? newEntityType, ...(newGender ? { gender: newGender } : {}) }),
       });
       if (!res.ok) throw new Error((await res.json()).message);
       return res.json();
@@ -2446,6 +2447,18 @@ function PeopleManagementSection() {
                 if (e.key === 'Escape') setShowCreate(false);
               }}
             />
+            {newEntityType === 'PERSON' && (
+              <select
+                value={newGender}
+                onChange={(e) => setNewGender(e.target.value)}
+                className="rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="">Gender</option>
+                <option value="MALE">Male</option>
+                <option value="FEMALE">Female</option>
+                <option value="OTHER">Other</option>
+              </select>
+            )}
             <button
               type="button"
               onClick={() => newName.trim() && createMut.mutate()}

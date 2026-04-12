@@ -187,6 +187,7 @@ export const connections = {
         name: string | null;
         avatarUrl: string | null;
         entityType: string;
+        gender: string | null;
         faceCount: number;
         relationshipCount: number;
       }>;
@@ -197,6 +198,12 @@ export const connections = {
         relationType: string;
         label: string | null;
         isBidirectional: boolean;
+      }>;
+      groups: Array<{
+        id: string;
+        name: string;
+        color: string | null;
+        memberIds: string[];
       }>;
     }>('/connections'),
 };

@@ -39,6 +39,7 @@ export async function GET(request: Request) {
       name: p.name,
       avatarUrl: p.avatarUrl ?? p.linkedUser?.avatarUrl ?? null,
       entityType: p.entityType ?? 'PERSON',
+      gender: p.gender ?? null,
       faceCount: p._count.faces,
       relationshipCount: p._count.relationshipsAsSource + p._count.relationshipsAsTarget,
       groups: p.groupMemberships.map((m) => ({ groupId: m.groupId, role: m.role })),
