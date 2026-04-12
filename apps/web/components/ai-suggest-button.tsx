@@ -54,7 +54,7 @@ const TONE_OPTIONS = [
 
 interface SuggestResponse {
   suggestions: string[];
-  description: string | null;
+  descriptions: string[];
   tags: string[];
   jobId: string;
   tokens: { input: number; output: number };
@@ -77,6 +77,8 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
   const [data, setData] = useState<SuggestResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toneOverride, setToneOverride] = useState('');
+  const [selectedDesc, setSelectedDesc] = useState<number>(-1);
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
 
   // Fetch actual cost/time from past AI jobs for the estimate
   const { data: usageStats } = useQuery({
@@ -118,6 +120,9 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
         throw new Error('No suggestions returned. Try a different tone or check your API key.');
       }
       setData(result);
+      // Auto-select all tags and first description
+      setSelectedTags(new Set(result.tags));
+      setSelectedDesc(result.descriptions.length > 0 ? 0 : -1);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
@@ -127,8 +132,14 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
 
   const handleSelect = (title: string) => {
     onSelectTitle(title);
-    if (data?.description && onSelectDescription) onSelectDescription(data.description);
-    if (data?.tags?.length && onSelectTags) onSelectTags(data.tags);
+    // Apply the selected description (if any)
+    if (selectedDesc >= 0 && data?.descriptions[selectedDesc] && onSelectDescription) {
+      onSelectDescription(data.descriptions[selectedDesc]);
+    }
+    // Apply only the checked tags
+    if (selectedTags.size > 0 && onSelectTags) {
+      onSelectTags([...selectedTags]);
+    }
     setOpen(false);
   };
 
@@ -276,28 +287,81 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
                   </div>
                 </div>
 
-                {/* Description */}
-                {data.description && (
+                {/* Descriptions — click to select */}
+                {data.descriptions.length > 0 && (
                   <div>
-                    <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">Description</p>
-                    <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs leading-relaxed text-muted-foreground">{data.description}</p>
-                  </div>
-                )}
-
-                {/* Tags */}
-                {data.tags.length > 0 && (
-                  <div>
-                    <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">Tags</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {data.tags.map((tag, i) => (
-                        <span key={i} className="rounded-full border border-border bg-muted/30 px-2.5 py-0.5 text-[11px]">{tag}</span>
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Description — pick one</p>
+                    <div className="space-y-1">
+                      {data.descriptions.map((desc, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setSelectedDesc(i)}
+                          className={cn(
+                            'flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left text-xs leading-relaxed transition',
+                            selectedDesc === i
+                              ? 'border-primary/40 bg-primary/5 text-foreground'
+                              : 'border-border text-muted-foreground hover:border-primary/20',
+                          )}
+                        >
+                          <div className={cn(
+                            'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition',
+                            selectedDesc === i ? 'border-primary bg-primary' : 'border-border',
+                          )}>
+                            {selectedDesc === i && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                          </div>
+                          <span>{desc}</span>
+                        </button>
                       ))}
                     </div>
                   </div>
                 )}
 
+                {/* Tags — individually selectable */}
+                {data.tags.length > 0 && (
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Tags</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedTags.size === data.tags.length) setSelectedTags(new Set());
+                          else setSelectedTags(new Set(data.tags));
+                        }}
+                        className="text-[10px] text-primary hover:underline"
+                      >
+                        {selectedTags.size === data.tags.length ? 'Deselect all' : 'Select all'}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {data.tags.map((tag, i) => {
+                        const isOn = selectedTags.has(tag);
+                        return (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => {
+                              const next = new Set(selectedTags);
+                              if (isOn) next.delete(tag); else next.add(tag);
+                              setSelectedTags(next);
+                            }}
+                            className={cn(
+                              'rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition',
+                              isOn
+                                ? 'border-primary/40 bg-primary/10 text-primary'
+                                : 'border-border text-muted-foreground hover:border-primary/20',
+                            )}
+                          >
+                            {tag}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 <p className="text-[10px] text-muted-foreground/60 italic">
-                  Clicking a title also applies the description and tags above.
+                  Pick a title above to apply it along with the selected description and tags.
                 </p>
               </div>
             )}

@@ -32,8 +32,9 @@ interface FaceDetectionJobOptions {
   archiveRootId?: string;
   userId?: string;
   limit?: number;
-  /** OpenAI API key from the encrypted secrets store. */
   openAiApiKey?: string;
+  anthropicApiKey?: string;
+  geminiApiKey?: string;
 }
 
 export class FaceDetectionJob {
@@ -54,9 +55,13 @@ export class FaceDetectionJob {
       await this.jobManager.markRunning(jobId);
 
       // Get the AI provider
-      const aiService = await this.buildAiService(options.openAiApiKey);
+      const aiService = await this.buildAiService({
+        openAiApiKey: options.openAiApiKey,
+        anthropicApiKey: options.anthropicApiKey,
+        geminiApiKey: options.geminiApiKey,
+      });
       if (!aiService) {
-        await this.jobManager.markFailed(jobId, 'Face detection is not configured. Enable AI and set an OpenAI API key in settings.');
+        await this.jobManager.markFailed(jobId, 'Face detection is not configured. Enable AI and set an API key in settings.');
         return { processed: 0, facesFound: 0 };
       }
 
@@ -210,7 +215,7 @@ export class FaceDetectionJob {
     }
   }
 
-  private async buildAiService(openAiApiKey?: string): Promise<AiService | null> {
+  private async buildAiService(opts: { openAiApiKey?: string; anthropicApiKey?: string; geminiApiKey?: string }): Promise<AiService | null> {
     const { SettingsRepository } = await import('@harbor/database');
     const settingsRepo = new SettingsRepository();
 
@@ -218,11 +223,25 @@ export class FaceDetectionJob {
     const faceEnabled = await settingsRepo.get('ai.faceRecognition');
     if (aiEnabled !== 'true' || faceEnabled !== 'true') return null;
 
-    const apiKey = openAiApiKey;
+    // Determine which backend to use for face detection
+    const faceProvider = await settingsRepo.get('ai.faceDetection.provider', 'openai');
+    let backend: 'openai' | 'anthropic' | 'gemini' = 'openai';
+    let apiKey: string | undefined;
+
+    if (faceProvider === 'gemini' && opts.geminiApiKey) {
+      backend = 'gemini';
+      apiKey = opts.geminiApiKey;
+    } else if (faceProvider === 'anthropic' && opts.anthropicApiKey) {
+      backend = 'anthropic';
+      apiKey = opts.anthropicApiKey;
+    } else {
+      apiKey = opts.openAiApiKey;
+    }
+
     if (!apiKey) return null;
 
     const service = new AiService();
-    const provider = new FaceDetectionProvider({ apiKey });
+    const provider = new FaceDetectionProvider({ backend, apiKey });
     service.registerProvider(provider);
     service.setRouting('face_detection', provider.name);
 

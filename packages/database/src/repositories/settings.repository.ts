@@ -9,6 +9,7 @@ export const SETTING_DEFAULTS: Record<string, string> = {
   'preview.cacheDir': './data/preview-cache',
   'ai.enabled': 'false',
   'ai.faceRecognition': 'false',
+  'ai.faceDetection.provider': 'openai',
   'ai.defaultProvider': 'openai',
   'ai.defaultModel': 'gpt-4o',
   'ai.title.enabled': 'true',

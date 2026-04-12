@@ -2035,6 +2035,32 @@ function AiSettingsSection() {
           </div>
         </div>
 
+        <div className="rounded-lg border border-border p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Default AI Model</p>
+              <p className="text-xs text-muted-foreground">Which model to use for content generation</p>
+            </div>
+            <select
+              value={settings?.['ai.defaultModel'] ?? 'gpt-4o'}
+              onChange={(e) => saveMutation.mutate({ 'ai.defaultModel': e.target.value })}
+              className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <optgroup label="OpenAI">
+                <option value="gpt-4o">GPT-4o</option>
+                <option value="gpt-4o-mini">GPT-4o Mini</option>
+              </optgroup>
+              <optgroup label="Anthropic">
+                <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+              </optgroup>
+              <optgroup label="Google Gemini">
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+              </optgroup>
+            </select>
+          </div>
+        </div>
+
         <SecretField label="OpenAI API Key" description="Powers OCR, image analysis, transcription (Whisper), and text embeddings." secretKey="openai.apiKey" isSet={secretStatus?.['openai.apiKey'] ?? false} helpUrl="https://platform.openai.com/api-keys" helpText="Get API key" />
         <SecretField label="Anthropic API Key" description="Powers auto-tagging, title generation, descriptions, and summarization." secretKey="anthropic.apiKey" isSet={secretStatus?.['anthropic.apiKey'] ?? false} helpUrl="https://console.anthropic.com/settings/keys" helpText="Get API key" />
         <SecretField label="Google Gemini API Key" description="Powers title generation, descriptions, and tags via Gemini vision." secretKey="gemini.apiKey" isSet={secretStatus?.['gemini.apiKey'] ?? false} helpUrl="https://aistudio.google.com/app/apikey" helpText="Get API key" />
@@ -2044,6 +2070,8 @@ function AiSettingsSection() {
           faceEnabled={settings?.['ai.faceRecognition'] === 'true'}
           onToggleFace={(on) => saveMutation.mutate({ 'ai.faceRecognition': on ? 'true' : 'false' })}
           hasOpenAiKey={secretStatus?.['openai.apiKey'] ?? false}
+          faceProvider={settings?.['ai.faceDetection.provider'] ?? 'openai'}
+          onFaceProviderChange={(p) => saveMutation.mutate({ 'ai.faceDetection.provider': p })}
         />
 
         {/* Content Generation Settings */}
@@ -2055,27 +2083,6 @@ function AiSettingsSection() {
 
           {aiEnabled && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs text-muted-foreground">AI Model</label>
-                <select
-                  value={settings?.['ai.defaultModel'] ?? 'gpt-4o'}
-                  onChange={(e) => saveMutation.mutate({ 'ai.defaultModel': e.target.value })}
-                  className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <optgroup label="OpenAI">
-                    <option value="gpt-4o">GPT-4o (best quality, ~$0.01/image)</option>
-                    <option value="gpt-4o-mini">GPT-4o Mini (faster, ~$0.002/image)</option>
-                  </optgroup>
-                  <optgroup label="Anthropic">
-                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (~$0.01/image)</option>
-                  </optgroup>
-                  <optgroup label="Google Gemini">
-                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (fast, ~$0.001/image)</option>
-                    <option value="gemini-1.5-pro">Gemini 1.5 Pro (~$0.005/image)</option>
-                  </optgroup>
-                </select>
-              </div>
-
               <div className="flex items-center justify-between">
                 <label className="text-xs text-muted-foreground">Tone</label>
                 <select
@@ -2264,11 +2271,15 @@ function FaceDetectionControls({
   faceEnabled,
   onToggleFace,
   hasOpenAiKey,
+  faceProvider,
+  onFaceProviderChange,
 }: {
   aiEnabled: boolean;
   faceEnabled: boolean;
   onToggleFace: (on: boolean) => void;
   hasOpenAiKey: boolean;
+  faceProvider: string;
+  onFaceProviderChange: (provider: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [running, setRunning] = useState(false);
@@ -2322,10 +2333,25 @@ function FaceDetectionControls({
         </button>
       </div>
 
+      {aiEnabled && faceEnabled && (
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-muted-foreground">Vision provider</label>
+          <select
+            value={faceProvider}
+            onChange={(e) => onFaceProviderChange(e.target.value)}
+            className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value="openai">OpenAI (GPT-4o)</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="gemini">Google Gemini</option>
+          </select>
+        </div>
+      )}
+
       {!aiEnabled && (
         <p className="text-[11px] text-amber-600">Enable AI features above to use face detection.</p>
       )}
-      {aiEnabled && !hasOpenAiKey && (
+      {aiEnabled && !hasOpenAiKey && faceProvider === 'openai' && (
         <p className="text-[11px] text-amber-600">Set an OpenAI API key above — face detection uses GPT-4o vision.</p>
       )}
 

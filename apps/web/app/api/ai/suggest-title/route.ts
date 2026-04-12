@@ -152,7 +152,7 @@ export async function POST(request: Request) {
 
     // ── Call AI provider ──────────────────────────────────────
     let suggestions: string[] = [];
-    let parsedDescription: string | null = null;
+    let parsedDescriptions: string[] = [];
     let parsedTags: string[] = [];
     let inputTokens = 0;
     let outputTokens = 0;
@@ -167,7 +167,7 @@ export async function POST(request: Request) {
         result = await callOpenAI(apiKey, model, prompt, dataUrl);
       }
       suggestions = result.suggestions;
-      parsedDescription = result.description ?? null;
+      parsedDescriptions = result.descriptions ?? [];
       parsedTags = result.tags ?? [];
       inputTokens = result.inputTokens;
       outputTokens = result.outputTokens;
@@ -206,8 +206,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       suggestions,
-      description: suggestions.length > 0 ? (parsedDescription ?? null) : null,
-      tags: suggestions.length > 0 ? (parsedTags ?? []) : [],
+      descriptions: suggestions.length > 0 ? parsedDescriptions : [],
+      tags: suggestions.length > 0 ? parsedTags : [],
       jobId,
       tokens: { input: inputTokens, output: outputTokens },
       cost,
@@ -230,7 +230,7 @@ export async function POST(request: Request) {
  * bullet lists, and plain text lines. Falls back gracefully when the
  * model returns natural language instead of JSON.
  */
-function parseAiResponse(raw: string): { titles: string[]; description: string | null; tags: string[] } {
+function parseAiResponse(raw: string): { titles: string[]; descriptions: string[]; tags: string[] } {
   const cleaned = raw.trim();
 
   // Try JSON parsing first
@@ -241,11 +241,14 @@ function parseAiResponse(raw: string): { titles: string[]; description: string |
       json = json.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     }
     const parsed = JSON.parse(json);
-    if (Array.isArray(parsed)) return { titles: parsed.filter((t): t is string => typeof t === 'string' && t.trim().length > 0), description: null, tags: [] };
+    if (Array.isArray(parsed)) return { titles: parsed.filter((t): t is string => typeof t === 'string' && t.trim().length > 0), descriptions: [], tags: [] };
     const titles = (parsed.titles ?? parsed.suggestions ?? []).filter((t: unknown): t is string => typeof t === 'string' && t.trim().length > 0);
-    const description = typeof parsed.description === 'string' ? parsed.description : null;
+    // Handle both "descriptions" (array) and "description" (single string)
+    let descriptions: string[] = [];
+    if (Array.isArray(parsed.descriptions)) descriptions = parsed.descriptions.filter((d: unknown): d is string => typeof d === 'string' && d.trim().length > 0);
+    else if (typeof parsed.description === 'string') descriptions = [parsed.description];
     const tags = Array.isArray(parsed.tags) ? parsed.tags.filter((t: unknown): t is string => typeof t === 'string') : [];
-    if (titles.length > 0) return { titles, description, tags };
+    if (titles.length > 0) return { titles, descriptions, tags };
   } catch { /* not JSON, try other formats */ }
 
   // Try line-by-line extraction (numbered lists, bullet lists)
@@ -253,9 +256,9 @@ function parseAiResponse(raw: string): { titles: string[]; description: string |
     .map((l) => l.replace(/^\s*[-•*]\s*/, '').replace(/^\s*\d+[.)]\s*/, '').replace(/^["']|["']$/g, '').trim())
     .filter((l) => l.length > 3 && l.length < 200 && !l.startsWith('{') && !l.startsWith('I '));
 
-  if (lines.length >= 2) return { titles: lines, description: null, tags: [] };
+  if (lines.length >= 2) return { titles: lines, descriptions: [], tags: [] };
 
-  return { titles: [], description: null, tags: [] };
+  return { titles: [], descriptions: [], tags: [] };
 }
 
 // ─── Prompt Builder ──────────────────────────────────────────────────────────
@@ -284,9 +287,9 @@ function buildPrompt(opts: {
   parts.push('All titles MUST be in Title Case (capitalize the first letter of each major word).');
   parts.push('Do NOT include quotes around the titles.');
   parts.push('\nAlso generate:');
-  parts.push(`- A description of the image (2-3 sentences, same tone, max ${opts.descMaxLength ?? 200} characters)`);
+  parts.push(`- 3 different description options for the image (each 2-3 sentences, same tone, max ${opts.descMaxLength ?? 200} characters each)`);
   parts.push(`- ${opts.tagCount ?? 8} descriptive tags in Title Case (capitalize each word)`);
-  parts.push('\nReturn ONLY a valid JSON object with keys: "titles" (array of strings), "description" (string), "tags" (array of strings). No other text.');
+  parts.push('\nReturn ONLY a valid JSON object with keys: "titles" (array of strings), "descriptions" (array of strings), "tags" (array of strings). No other text.');
 
   return parts.join('\n');
 }
@@ -298,7 +301,7 @@ async function callOpenAI(
   model: string,
   prompt: string,
   dataUrl: string,
-): Promise<{ suggestions: string[]; description: string | null; tags: string[]; inputTokens: number; outputTokens: number }> {
+): Promise<{ suggestions: string[]; descriptions: string[]; tags: string[]; inputTokens: number; outputTokens: number }> {
   const res = await globalThis.fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -336,7 +339,7 @@ async function callOpenAI(
 
   return {
     suggestions: aiResult.titles,
-    description: aiResult.description,
+    descriptions: aiResult.descriptions,
     tags: aiResult.tags,
     inputTokens: response.usage?.prompt_tokens ?? 0,
     outputTokens: response.usage?.completion_tokens ?? 0,
@@ -351,7 +354,7 @@ async function callAnthropic(
   prompt: string,
   dataUrl: string,
   mimeType: string,
-): Promise<{ suggestions: string[]; description: string | null; tags: string[]; inputTokens: number; outputTokens: number }> {
+): Promise<{ suggestions: string[]; descriptions: string[]; tags: string[]; inputTokens: number; outputTokens: number }> {
   const base64 = dataUrl.split(',')[1];
   const mediaType = mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
 
@@ -400,7 +403,7 @@ async function callAnthropic(
 
   return {
     suggestions: aiResult.titles,
-    description: aiResult.description,
+    descriptions: aiResult.descriptions,
     tags: aiResult.tags,
     inputTokens: response.usage?.input_tokens ?? 0,
     outputTokens: response.usage?.output_tokens ?? 0,
@@ -415,7 +418,7 @@ async function callGemini(
   prompt: string,
   dataUrl: string,
   mimeType: string,
-): Promise<{ suggestions: string[]; description: string | null; tags: string[]; inputTokens: number; outputTokens: number }> {
+): Promise<{ suggestions: string[]; descriptions: string[]; tags: string[]; inputTokens: number; outputTokens: number }> {
   const base64 = dataUrl.split(',')[1];
 
   const res = await globalThis.fetch(
@@ -455,7 +458,7 @@ async function callGemini(
 
   return {
     suggestions: aiResult.titles,
-    description: aiResult.description,
+    descriptions: aiResult.descriptions,
     tags: aiResult.tags,
     inputTokens: response.usageMetadata?.promptTokenCount ?? 0,
     outputTokens: response.usageMetadata?.candidatesTokenCount ?? 0,

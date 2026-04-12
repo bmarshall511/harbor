@@ -24,7 +24,11 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const { fileId, archiveRootId, limit } = body;
 
-  const openAiApiKey = await getSecret('openai.apiKey');
+  const [openAiApiKey, anthropicApiKey, geminiApiKey] = await Promise.all([
+    getSecret('openai.apiKey'),
+    getSecret('anthropic.apiKey'),
+    getSecret('gemini.apiKey'),
+  ]);
 
   const job = new FaceDetectionJob();
   const result = await job.run({
@@ -33,6 +37,8 @@ export async function POST(request: Request) {
     userId: auth.userId,
     limit: limit ?? 100,
     openAiApiKey: openAiApiKey ?? undefined,
+    anthropicApiKey: anthropicApiKey ?? undefined,
+    geminiApiKey: geminiApiKey ?? undefined,
   });
 
   return NextResponse.json(result);
