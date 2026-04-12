@@ -19,6 +19,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       data: {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
+        ...(body.avatarFileId !== undefined ? {
+          avatarFileId: body.avatarFileId || null,
+          // Compute the URL from the file ID
+          avatarUrl: body.avatarFileId ? `/api/files/${body.avatarFileId}/preview?size=THUMBNAIL` : null,
+        } : {}),
         ...(body.linkedUserId !== undefined ? { linkedUserId: body.linkedUserId || null } : {}),
         ...(body.isConfirmed !== undefined ? { isConfirmed: body.isConfirmed } : {}),
         ...(body.entityType !== undefined ? { entityType: body.entityType } : {}),

@@ -309,6 +309,7 @@ model File {
   metadataEdits FileMetadataEdit[]
   previews    Preview[]
   faces       Face[]
+  personAvatars Person[] @relation("person_avatar")
   versions    FileVersion[]
   comments    Comment[]   @relation("file_comments")
   recentViews RecentView[]
@@ -504,8 +505,9 @@ enum PersonGender {
 model Person {
   id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String?
-  avatarUrl   String?          @map("avatar_url") // Admin-uploaded or auto-generated from best face crop
-  linkedUserId String?         @unique @map("linked_user_id") @db.Uuid // Optional link to a registered User
+  avatarUrl    String?          @map("avatar_url")
+  avatarFileId String?          @map("avatar_file_id") @db.Uuid // FK to an image file used as avatar
+  linkedUserId String?         @unique @map("linked_user_id") @db.Uuid
   entityType  PersonEntityType @default(PERSON) @map("entity_type")
   gender      PersonGender?    @map("gender")
   isConfirmed Boolean          @default(false) @map("is_confirmed")
@@ -513,6 +515,7 @@ model Person {
   updatedAt   DateTime         @updatedAt @map("updated_at")
 
   faces                  Face[]
+  avatarFile             File?                @relation("person_avatar", fields: [avatarFileId], references: [id], onDelete: SetNull)
   linkedUser             User?                @relation("person_linked_user", fields: [linkedUserId], references: [id], onDelete: SetNull)
   relationshipsAsSource  PersonRelationship[] @relation("relationship_source")
   relationshipsAsTarget  PersonRelationship[] @relation("relationship_target")

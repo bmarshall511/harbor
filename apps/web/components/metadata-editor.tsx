@@ -441,11 +441,16 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
       .slice(0, 20);
   }, [knownPersons]);
 
-  // Look up a person's avatar/entityType from known persons
+  // Look up a person's avatar/entityType/id from known persons
   function personMeta(person: Person) {
     const name = person.name.toLowerCase();
     const match = knownPersons.find((p) => p.name?.toLowerCase() === name);
-    return { avatarUrl: match?.avatarUrl ?? null, entityType: match?.entityType ?? 'PERSON' };
+    return {
+      id: match?.id ?? null,
+      avatarUrl: match?.avatarUrl ?? null,
+      avatarFileId: (match as any)?.avatarFileId ?? null,
+      entityType: match?.entityType ?? 'PERSON',
+    };
   }
 
   return (
@@ -526,7 +531,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
               >
                 {/* Mini avatar */}
                 <div className={cn(
-                  'relative flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden',
+                  'relative flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden',
                   isPet ? 'rounded-sm' : 'rounded-full',
                 )}>
                   {meta.avatarUrl ? (

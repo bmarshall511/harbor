@@ -37,7 +37,9 @@ export async function GET(request: Request) {
     const nodes = persons.map((p) => ({
       id: p.id,
       name: p.name,
-      avatarUrl: p.avatarUrl ?? p.linkedUser?.avatarUrl ?? null,
+      avatarUrl: p.avatarFileId
+        ? `/api/files/${p.avatarFileId}/preview?size=THUMBNAIL`
+        : (p.avatarUrl ?? p.linkedUser?.avatarUrl ?? null),
       entityType: p.entityType ?? 'PERSON',
       gender: p.gender ?? null,
       faceCount: p._count.faces,

@@ -31,6 +31,7 @@ import {
   FileImage,
   FileVideo,
   File as FileIcon,
+  Image as ImageIcon,
   GripVertical,
   ArrowUp,
   ArrowDown,
@@ -48,6 +49,7 @@ import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { useIsElectron, useMounted } from '@/lib/use-mounted';
 import { SecretField } from '@/components/secret-field';
+import { AvatarPicker } from '@/components/avatar-picker';
 import { DropboxFolderPicker } from '@/components/dropbox-folder-picker';
 import { LocalFolderPicker } from '@/components/local-folder-picker';
 
@@ -2240,6 +2242,7 @@ function PeopleManagementSection() {
         id: string | null;
         name: string | null;
         avatarUrl: string | null;
+        avatarFileId?: string | null;
         entityType?: 'PERSON' | 'PET';
         gender?: 'MALE' | 'FEMALE' | 'OTHER' | null;
         isConfirmed: boolean;
@@ -2501,10 +2504,10 @@ function PeopleManagementSection() {
                         aria-label={`Select ${person.name} for merge`}
                       />
                     )}
-                    {/* Avatar */}
+                    {/* Avatar — clickable for DB records to open image picker */}
                     {(() => {
                       const isPet = person.entityType === 'PET';
-                      return person.avatarUrl ? (
+                      const avatarContent = person.avatarUrl ? (
                         <div className="relative shrink-0">
                           <img
                             src={person.avatarUrl}
@@ -2525,6 +2528,40 @@ function PeopleManagementSection() {
                         )}>
                           {isPet ? <PawPrint className="h-5 w-5" /> : <Users className="h-5 w-5" />}
                         </div>
+                      );
+
+                      if (!isRecord || !person.id) return avatarContent;
+
+                      return (
+                        <AvatarPicker
+                          currentFileId={person.avatarFileId ?? null}
+                          onSelect={async (fileId) => {
+                            try {
+                              const res = await fetch(`/api/persons/${person.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ avatarFileId: fileId }),
+                              });
+                              if (!res.ok) throw new Error('Failed');
+                              queryClient.invalidateQueries({ queryKey: ['persons'] });
+                              queryClient.invalidateQueries({ queryKey: ['connections'] });
+                              toast.success(fileId ? 'Avatar set' : 'Avatar removed');
+                            } catch {
+                              toast.error('Failed to update avatar');
+                            }
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className="group relative shrink-0 cursor-pointer rounded-full"
+                            title="Click to set avatar"
+                          >
+                            {avatarContent}
+                            <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/0 transition group-hover:bg-black/30">
+                              <ImageIcon className="h-4 w-4 text-white opacity-0 transition group-hover:opacity-100" />
+                            </div>
+                          </button>
+                        </AvatarPicker>
                       );
                     })()}
 

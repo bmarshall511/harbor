@@ -26,6 +26,10 @@ import {
   Cloud,
   HardDrive,
   Loader2,
+  Camera,
+  Users,
+  PawPrint,
+  Check,
 } from 'lucide-react';
 import { FileMetadataEditor, FolderMetadataEditor } from '@/components/metadata-editor';
 import { trackView } from '@/lib/recently-viewed';
@@ -333,6 +337,11 @@ function FileDetail({ fileId }: { fileId: string }) {
       <div className="border-t border-border pt-3">
         <FileMetadataEditor file={file} />
       </div>
+
+      {/* Set as avatar — only for image files */}
+      {file.mimeType?.startsWith('image/') && (
+        <SetAsAvatarSection fileId={file.id} />
+      )}
 
       {/* AI Tags (read-only) — sourced from meta.fields.aiTags */}
       {(() => {
@@ -790,4 +799,140 @@ function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ─── Set as Avatar ────────────────────────────────────────────────────────────
+
+/**
+ * "Use as avatar" section — lets admins assign the current image file
+ * as the avatar for any person or pet. Shows a dropdown of known
+ * persons with a "Set as photo" button.
+ */
+function SetAsAvatarSection({ fileId }: { fileId: string }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [setting, setSetting] = useState<string | null>(null);
+
+  const { data: persons } = useQuery({
+    queryKey: ['persons'],
+    queryFn: async () => {
+      const res = await fetch('/api/persons');
+      if (!res.ok) return [];
+      return res.json() as Promise<Array<{
+        id: string | null;
+        name: string | null;
+        avatarUrl: string | null;
+        avatarFileId?: string | null;
+        entityType?: string;
+        source: string;
+      }>>;
+    },
+    enabled: open,
+  });
+
+  const dbPersons = (persons ?? []).filter((p) => p.source === 'record' && p.id && p.name);
+  const filtered = dbPersons.filter((p) =>
+    !search || p.name!.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  const handleSet = async (personId: string, personName: string) => {
+    setSetting(personId);
+    try {
+      const res = await fetch(`/api/persons/${personId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ avatarFileId: fileId }),
+      });
+      if (!res.ok) throw new Error('Failed');
+      queryClient.invalidateQueries({ queryKey: ['persons'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      const { toast } = await import('sonner');
+      toast.success(`Set as ${personName}'s photo`);
+    } catch {
+      const { toast } = await import('sonner');
+      toast.error('Failed to set avatar');
+    } finally {
+      setSetting(null);
+    }
+  };
+
+  if (!open) {
+    return (
+      <div className="border-t border-border pt-3">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition"
+        >
+          <Camera className="h-3.5 w-3.5" />
+          Use as avatar for a person or pet
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-border pt-3">
+      <div className="rounded-lg border border-border bg-card p-3">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-xs font-medium text-foreground flex items-center gap-1.5">
+            <Camera className="h-3.5 w-3.5" />
+            Set as avatar
+          </h4>
+          <button
+            type="button"
+            onClick={() => { setOpen(false); setSearch(''); }}
+            className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search people & pets..."
+          className="mb-2 w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          autoFocus
+        />
+        <div className="max-h-40 overflow-y-auto space-y-0.5">
+          {filtered.slice(0, 30).map((p) => {
+            const isPet = p.entityType === 'PET';
+            const isCurrentAvatar = p.avatarFileId === fileId;
+            return (
+              <div key={p.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent transition">
+                {p.avatarUrl ? (
+                  <img src={p.avatarUrl} alt="" className={cn('h-7 w-7 object-cover', isPet ? 'rounded-lg' : 'rounded-full')} />
+                ) : (
+                  <div className={cn('flex h-7 w-7 items-center justify-center', isPet ? 'rounded-lg bg-amber-500/10' : 'rounded-full bg-muted')}>
+                    {isPet ? <PawPrint className="h-3 w-3 text-amber-500" /> : <Users className="h-3 w-3 text-muted-foreground" />}
+                  </div>
+                )}
+                <span className="flex-1 truncate font-medium">{p.name}</span>
+                {isCurrentAvatar ? (
+                  <span className="flex items-center gap-1 text-[10px] text-green-600">
+                    <Check className="h-3 w-3" /> Current
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleSet(p.id!, p.name!)}
+                    disabled={setting === p.id}
+                    className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {setting === p.id ? 'Setting...' : 'Set'}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {filtered.length === 0 && (
+            <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">
+              {search ? 'No matches' : 'No people or pets yet'}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
