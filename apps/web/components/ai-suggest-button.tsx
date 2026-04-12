@@ -81,6 +81,7 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
   const [data, setData] = useState<SuggestResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toneOverride, setToneOverride] = useState('');
+  const [selectedTitle, setSelectedTitle] = useState<number>(0);
   const [selectedDesc, setSelectedDesc] = useState<number>(-1);
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
 
@@ -121,9 +122,10 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
 
       const result = await res.json() as SuggestResponse;
       setData(result);
-      // Auto-select all tags and first description
-      setSelectedTags(new Set(result.tags));
+      // Auto-select first title, first description, all tags
+      setSelectedTitle(0);
       setSelectedDesc(result.descriptions.length > 0 ? 0 : -1);
+      setSelectedTags(new Set(result.tags));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
@@ -131,13 +133,16 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
     }
   };
 
-  const handleSelect = (title: string) => {
-    onSelectTitle(title);
-    // Apply the selected description (if any)
-    if (selectedDesc >= 0 && data?.descriptions[selectedDesc] && onSelectDescription) {
+  const handleApply = () => {
+    if (!data) return;
+    // Apply selected title
+    const title = data.suggestions[selectedTitle];
+    if (title) onSelectTitle(title);
+    // Apply selected description
+    if (selectedDesc >= 0 && data.descriptions[selectedDesc] && onSelectDescription) {
       onSelectDescription(data.descriptions[selectedDesc]);
     }
-    // Apply only the checked tags
+    // Apply checked tags
     if (selectedTags.size > 0 && onSelectTags) {
       onSelectTags([...selectedTags]);
     }
@@ -296,19 +301,29 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
             {/* Results */}
             {data && !loading && (
               <div className="space-y-4">
-                {/* Title suggestions */}
+                {/* Title suggestions — radio select */}
                 <div>
-                  <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Titles — click to select</p>
+                  <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Title</p>
                   <div className="space-y-1">
                     {data.suggestions.map((title, i) => (
                       <button
                         key={i}
                         type="button"
-                        onClick={() => handleSelect(title)}
-                        className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm transition hover:border-primary/30 hover:bg-primary/5"
+                        onClick={() => setSelectedTitle(i)}
+                        className={cn(
+                          'flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left text-sm transition',
+                          selectedTitle === i
+                            ? 'border-primary/40 bg-primary/5 text-foreground'
+                            : 'border-border text-muted-foreground hover:border-primary/20',
+                        )}
                       >
+                        <div className={cn(
+                          'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition',
+                          selectedTitle === i ? 'border-primary bg-primary' : 'border-border',
+                        )}>
+                          {selectedTitle === i && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                        </div>
                         <span className="flex-1">{title}</span>
-                        <Check className="h-3.5 w-3.5 text-muted-foreground/30" />
                       </button>
                     ))}
                   </div>
@@ -387,9 +402,15 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
                   </div>
                 )}
 
-                <p className="text-[10px] text-muted-foreground/60 italic">
-                  Pick a title above to apply it along with the selected description and tags.
-                </p>
+                {/* Apply button */}
+                <button
+                  type="button"
+                  onClick={handleApply}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition"
+                >
+                  <Check className="h-4 w-4" />
+                  Apply Selected
+                </button>
               </div>
             )}
           </div>
