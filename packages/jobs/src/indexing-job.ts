@@ -135,7 +135,9 @@ export class IndexingJob {
       await this.dedupeFolders(root.id);
       await this.dedupeFiles(root.id);
 
-      // Clean up stale entries from previous indexing runs (orphaned paths, old absolute paths, etc.)
+      // Clean up stale entries from previous indexing runs.
+      // This code only runs if the traversal completed fully (the
+      // interrupted/cancelled checks above return early before here).
       await this.fileRepo.deleteStale(root.id, indexStartTime);
       await this.folderRepo.deleteStale(root.id, indexStartTime);
 
