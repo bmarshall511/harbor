@@ -32,8 +32,10 @@ export class IndexingJob {
   private _cancelled = false;
   private _deadline = 0; // 0 = no deadline
   private _interrupted = false;
-  private _lastActivityTime = 0; // Watchdog: last time a file/folder was processed
+  private _lastActivityTime = 0;
   private _stuckThresholdMs = 120_000; // 2 minutes without progress = stuck
+  private _skipCount = 0; // For chunked continuation: skip this many entries
+  private _totalEntriesProcessed = 0; // Entries processed in THIS chunk (for resume)
 
   /** Set a deadline (epoch ms) after which the job will pause for resumption. */
   setDeadline(deadlineMs: number): void {
@@ -45,11 +47,19 @@ export class IndexingJob {
     return this._interrupted;
   }
 
+  /** Set how many entries to skip (for chunked continuation). */
+  setSkipCount(count: number): void {
+    this._skipCount = count;
+  }
+
   /** Get current processing stats. */
   getStats() {
     return {
+      jobId: this._jobId,
       filesProcessed: this._filesProcessed,
       foldersProcessed: this._foldersProcessed,
+      totalEntriesProcessed: this._totalEntriesProcessed,
+      skipCount: this._skipCount,
     };
   }
 
@@ -100,7 +110,9 @@ export class IndexingJob {
         // traversal, and handles large archives without re-traversal.
         const dbxProvider = provider as import('@harbor/providers').DropboxProvider;
         const startPath = root.rootPath === '/' ? '' : root.rootPath;
-        await this.indexFlatList(dbxProvider, root.id, root.rootPath, startPath);
+        // On continuation, skip entries already processed in previous chunks
+        const skipCount = this._skipCount;
+        await this.indexFlatList(dbxProvider, root.id, root.rootPath, startPath, skipCount);
       } else {
         // Local filesystem: recursive directory walk
         await this.indexDirectory(provider, root.id, root.rootPath, '', null, 0);
@@ -110,10 +122,10 @@ export class IndexingJob {
       if (this._cancelled) return;
       if (this._interrupted) {
         const reason = this._deadline > 0 ? 'Vercel timeout — will auto-continue' : 'Watchdog: no activity for 2 minutes';
-        // Mark as COMPLETED with partial progress so the stale job expiry
-        // doesn't kill it. The UI will auto-continue via the response.
+        const resumeAt = this._skipCount + this._totalEntriesProcessed;
         await this.jobManager.markCompleted(jobId);
         await this.jobManager.updateProgress(jobId, 0.5, {
+          archiveRootId,
           filesProcessed: this._filesProcessed,
           foldersProcessed: this._foldersProcessed,
           images: this._imageCount,
@@ -121,6 +133,7 @@ export class IndexingJob {
           currentPath: this._currentPath,
           interruptReason: reason,
           partial: true,
+          resumeAt, // Next chunk should skip this many entries
         }).catch(() => {});
         return;
       }
@@ -315,9 +328,16 @@ export class IndexingJob {
     archiveRootId: string,
     archiveRootPath: string,
     startPath: string,
+    skipCount: number = 0,
   ): Promise<void> {
+    let entryIndex = 0;
     try {
       for await (const entry of provider.listAllRecursive(startPath)) {
+        // Skip entries already processed in previous chunks
+        entryIndex++;
+        if (entryIndex <= skipCount) continue;
+
+        this._totalEntriesProcessed++;
         await new Promise<void>((resolve) => setImmediate(resolve));
 
         if (this._cancelled) return;

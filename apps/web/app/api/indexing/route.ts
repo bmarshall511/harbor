@@ -68,6 +68,15 @@ export async function POST(request: Request) {
       indexingJob.setDeadline(Date.now() + CHUNK_TIMEOUT_MS);
     }
 
+    // On continuation, read the resume position from the previous job
+    if (continueJobId) {
+      const prevJob = await db.backgroundJob.findUnique({ where: { id: continueJobId } });
+      const resumeAt = (prevJob?.metadata as any)?.resumeAt;
+      if (typeof resumeAt === 'number' && resumeAt > 0) {
+        indexingJob.setSkipCount(resumeAt);
+      }
+    }
+
     await indexingJob.indexArchiveRoot(archiveRootId, auth.userId, dropboxCredentials);
 
     // Check if the job hit the deadline and needs to continue
@@ -77,6 +86,7 @@ export async function POST(request: Request) {
         archiveRootId,
         status: 'in_progress',
         continue: true,
+        jobId: indexingJob.getStats().jobId,
         filesProcessed: indexingJob.getStats().filesProcessed,
         foldersProcessed: indexingJob.getStats().foldersProcessed,
       });

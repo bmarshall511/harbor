@@ -117,7 +117,9 @@ export function IndexingStatus() {
       ) {
         continuingRef.current.add(job.id);
         const archiveRootId = (job.metadata as any).archiveRootId;
-        // Auto-continue after a short delay
+        const resumeAt = (job.metadata as any).resumeAt ?? 0;
+        // Auto-continue after a short delay, passing this job's ID
+        // so the next chunk reads resumeAt and skips already-processed entries
         setTimeout(() => {
           fetch('/api/indexing', {
             method: 'POST',
