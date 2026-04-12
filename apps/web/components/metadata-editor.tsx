@@ -122,10 +122,17 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
                 setFormData((prev) => ({ ...prev, description: v }));
                 setEditing(true);
               }}
-              onSelectTags={(tags) => {
-                // Tags will be saved when the form is submitted
-                setFormData((prev) => ({ ...prev, tags }));
-                setEditing(true);
+              onSelectTags={async (aiTags) => {
+                // Apply tags directly via the file update API (tags are
+                // handled separately from the form — they go through the
+                // tag sync system, not the metadata form save).
+                try {
+                  await filesApi.update(file.id, { tags: aiTags });
+                  queryClient.invalidateQueries({ queryKey: ['file', file.id] });
+                  queryClient.invalidateQueries({ queryKey: ['tags'] });
+                } catch {
+                  // Non-fatal — title/description still applied
+                }
               }}
             />
           )}
