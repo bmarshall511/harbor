@@ -71,48 +71,124 @@ export async function POST(request: Request) {
     const root = await db.archiveRoot.findUnique({ where: { id: file.archiveRootId } });
     if (!root) return NextResponse.json({ message: 'Archive root not found' }, { status: 404 });
 
-    let imageBuffer: Buffer | null = null;
+    // For non-standard image types (RAW: NEF, CR2, ARW, etc.), AI providers
+    // can't process the raw bytes. Check for cached WebP previews FIRST —
+    // these are fast to read and already in a format AI providers accept.
+    const standardImageTypes = new Set([
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/tiff',
+    ]);
+    const isStandardType = standardImageTypes.has(file.mimeType ?? '');
 
-    if (root.providerType === 'LOCAL_FILESYSTEM') {
-      const fullPath = path.resolve(root.rootPath, file.path);
-      try {
-        imageBuffer = Buffer.from(await fs.readFile(fullPath));
-      } catch {
-        return NextResponse.json({ message: 'Could not read image file from disk.' }, { status: 404 });
-      }
-    } else {
-      // Dropbox: try offline cache first, then download via API
-      const cacheDir = await getSetting('preview.cacheDir');
-      const cachePath = path.join(cacheDir, 'offline', fileId);
-      try {
-        imageBuffer = Buffer.from(await fs.readFile(cachePath));
-      } catch {
-        // Not cached — auto-download via the cache endpoint
+    let aiBuffer: Buffer | null = null;
+    let aiMimeType = 'image/webp';
+
+    if (!isStandardType) {
+      // Try cached preview first (works for any provider)
+      const preview = await db.preview.findFirst({
+        where: { fileId, format: 'webp' },
+        orderBy: { width: 'desc' },
+      });
+
+      if (preview) {
         try {
-          const cacheRes = await fetch(new URL(`/api/files/${fileId}/cache`, request.url), {
-            method: 'POST',
-            headers: { cookie: request.headers.get('cookie') ?? '' },
-          });
-          if (cacheRes.ok) {
-            // Try reading again after caching
-            imageBuffer = Buffer.from(await fs.readFile(cachePath));
-          }
-        } catch { /* fall through */ }
+          aiBuffer = Buffer.from(await fs.readFile(preview.path));
+          console.log(`[AI/SuggestTitle] Using cached preview (${preview.size}, ${preview.width}px) for ${file.mimeType}`);
+        } catch {
+          console.warn(`[AI/SuggestTitle] Cached preview file missing at ${preview.path}`);
+        }
+      }
 
-        if (!imageBuffer) {
-          return NextResponse.json({
-            message: 'Could not download image from Dropbox. Try making it available offline first.',
-          }, { status: 400 });
+      // If no cached preview in DB, try fetching from our own preview endpoint
+      // (which handles Dropbox thumbnail API, local files, etc.)
+      if (!aiBuffer) {
+        try {
+          const previewRes = await fetch(
+            new URL(`/api/files/${fileId}/preview?size=LARGE`, request.url),
+            { headers: { cookie: request.headers.get('cookie') ?? '' } },
+          );
+          if (previewRes.ok) {
+            const rawBuf = Buffer.from(await previewRes.arrayBuffer());
+            const contentType = previewRes.headers.get('content-type') ?? 'image/jpeg';
+
+            // If the preview endpoint returned a non-standard type (e.g. raw NEF),
+            // convert it to WebP via Sharp before sending to AI
+            if (standardImageTypes.has(contentType)) {
+              aiBuffer = rawBuf;
+              aiMimeType = contentType;
+            } else {
+              try {
+                const sharp = (await import('sharp')).default;
+                aiBuffer = await sharp(rawBuf)
+                  .resize(1600, undefined, { fit: 'inside', withoutEnlargement: true })
+                  .webp({ quality: 85 })
+                  .toBuffer();
+                aiMimeType = 'image/webp';
+                console.log(`[AI/SuggestTitle] Converted preview from ${contentType} to WebP (${aiBuffer.length} bytes)`);
+              } catch (convertErr) {
+                console.error(`[AI/SuggestTitle] Sharp conversion failed:`, convertErr);
+              }
+            }
+
+            if (aiBuffer) {
+              console.log(`[AI/SuggestTitle] Using preview API image (${aiBuffer.length} bytes, ${aiMimeType})`);
+            }
+          }
+        } catch {
+          console.warn(`[AI/SuggestTitle] Preview API fetch failed for ${fileId}`);
+        }
+      }
+
+      if (!aiBuffer) {
+        return NextResponse.json({
+          message: `RAW image format (${file.mimeType}) requires a preview. Click the re-index button first to generate previews.`,
+        }, { status: 400 });
+      }
+    }
+
+    // For standard image types, read the actual file
+    if (!aiBuffer) {
+      aiMimeType = file.mimeType!;
+
+      if (root.providerType === 'LOCAL_FILESYSTEM') {
+        const fullPath = path.resolve(root.rootPath, file.path);
+        try {
+          aiBuffer = Buffer.from(await fs.readFile(fullPath));
+        } catch {
+          return NextResponse.json({ message: 'Could not read image file from disk.' }, { status: 404 });
+        }
+      } else {
+        // Dropbox: try offline cache first, then download via API
+        const cacheDir = await getSetting('preview.cacheDir');
+        const cachePath = path.join(cacheDir, 'offline', fileId);
+        try {
+          aiBuffer = Buffer.from(await fs.readFile(cachePath));
+        } catch {
+          // Not cached — auto-download via the cache endpoint
+          try {
+            const cacheRes = await fetch(new URL(`/api/files/${fileId}/cache`, request.url), {
+              method: 'POST',
+              headers: { cookie: request.headers.get('cookie') ?? '' },
+            });
+            if (cacheRes.ok) {
+              aiBuffer = Buffer.from(await fs.readFile(cachePath));
+            }
+          } catch { /* fall through */ }
+
+          if (!aiBuffer) {
+            return NextResponse.json({
+              message: 'Could not download image from Dropbox. Try making it available offline first.',
+            }, { status: 400 });
+          }
         }
       }
     }
 
-    if (!imageBuffer || imageBuffer.length === 0) {
+    if (!aiBuffer || aiBuffer.length === 0) {
       return NextResponse.json({ message: 'Image file is empty.' }, { status: 400 });
     }
 
-    const base64 = imageBuffer.toString('base64');
-    const dataUrl = `data:${file.mimeType};base64,${base64}`;
+    const base64 = aiBuffer.toString('base64');
+    const dataUrl = `data:${aiMimeType};base64,${base64}`;
 
     // ── Extract existing metadata for context ──────────────────
     const existingTags = (file as any).tags?.map((t: any) => t.tag?.name).filter(Boolean) as string[] ?? [];
@@ -129,6 +205,14 @@ export async function POST(request: Request) {
     const folderName = (file as any).folder?.name as string | null;
     const adultContent = Array.isArray(meta?.fields?.adult_content) ? meta.fields.adult_content as string[] : [];
 
+    // Fetch all tags in the library so AI can reuse existing ones
+    const allLibraryTags = await db.tag.findMany({
+      select: { name: true },
+      orderBy: { usageCount: 'desc' },
+      take: 200,
+    });
+    const libraryTagNames = allLibraryTags.map((t) => t.name);
+
     // ── Build prompt ──────────────────────────────────────────
     const prompt = buildPrompt({
       tone,
@@ -144,6 +228,7 @@ export async function POST(request: Request) {
       existingDescription,
       folderName,
       adultContent,
+      libraryTags: libraryTagNames,
     });
 
     // ── Create tracking job ───────────────────────────────────
@@ -181,9 +266,9 @@ export async function POST(request: Request) {
     try {
       let result;
       if (isGemini) {
-        result = await callGemini(apiKey, model, prompt, dataUrl, file.mimeType!);
+        result = await callGemini(apiKey, model, prompt, dataUrl, aiMimeType);
       } else if (isAnthropic) {
-        result = await callAnthropic(apiKey, model, prompt, dataUrl, file.mimeType!);
+        result = await callAnthropic(apiKey, model, prompt, dataUrl, aiMimeType);
       } else {
         result = await callOpenAI(apiKey, model, prompt, dataUrl);
       }
@@ -305,6 +390,7 @@ function buildPrompt(opts: {
   existingDescription?: string | null;
   folderName?: string | null;
   adultContent?: string[];
+  libraryTags?: string[];
 }): string {
   const parts = [
     'You are analyzing an image to suggest titles for a media archive.',
@@ -385,6 +471,15 @@ function buildPrompt(opts: {
   parts.push('\nAlso generate:');
   parts.push(`- 3 different description options for the image (each 2-3 sentences, same tone, max ${opts.descMaxLength ?? 200} characters each)`);
   parts.push(`- ${opts.tagCount ?? 8} descriptive tags in Title Case (capitalize each word)`);
+
+  // Tag rules
+  parts.push('\nTag rules:');
+  parts.push('- NEVER use people\'s names as tags. Tags should describe the content, setting, mood, or activity — not identify individuals.');
+  if (opts.libraryTags && opts.libraryTags.length > 0) {
+    parts.push(`- Here are existing tags in the library. PREFER reusing these when they fit, rather than creating new ones: ${opts.libraryTags.join(', ')}`);
+    parts.push('- You may create new tags if none of the existing ones are appropriate, but reuse is strongly preferred for consistency.');
+  }
+
   parts.push('\nReturn ONLY a valid JSON object with keys: "titles" (array of strings), "descriptions" (array of strings), "tags" (array of strings). No other text.');
 
   return parts.join('\n');

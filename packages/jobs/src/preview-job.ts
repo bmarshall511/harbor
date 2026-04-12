@@ -93,18 +93,82 @@ export class PreviewJob {
             // (under `meta.fields`). The metadata service writes the
             // JSON and we mirror the result into the DB row's meta
             // column so search/filter still works.
+            const fields: Record<string, unknown> = {
+              width: metadata.width,
+              height: metadata.height,
+              colorSpace: metadata.space ?? undefined,
+            };
+
+            // Extract EXIF data if available
+            if (metadata.exif) {
+              try {
+                const exifReader = (await import('exif-reader')).default;
+                const exif = exifReader(metadata.exif);
+
+                if (exif.Image) {
+                  if (exif.Image.Make) fields.cameraMake = String(exif.Image.Make).trim();
+                  if (exif.Image.Model) fields.cameraModel = String(exif.Image.Model).trim();
+                  if (exif.Image.Software) fields.software = String(exif.Image.Software).trim();
+                }
+                if (exif.Photo) {
+                  if (exif.Photo.ISO || exif.Photo.ISOSpeedRatings) {
+                    const iso = exif.Photo.ISO ?? exif.Photo.ISOSpeedRatings;
+                    fields.iso = Array.isArray(iso) ? iso[0] : iso;
+                  }
+                  if (exif.Photo.FNumber) fields.aperture = exif.Photo.FNumber;
+                  if (exif.Photo.ExposureTime) {
+                    const et = exif.Photo.ExposureTime;
+                    fields.shutterSpeed = et < 1 ? `1/${Math.round(1 / et)}` : `${et}`;
+                  }
+                  if (exif.Photo.FocalLength) fields.focalLength = exif.Photo.FocalLength;
+                  if (exif.Photo.FocalLengthIn35mmFilm) fields.focalLength35mm = exif.Photo.FocalLengthIn35mmFilm;
+                  if (exif.Photo.LensModel) fields.lensModel = String(exif.Photo.LensModel).trim();
+                  if (exif.Photo.ExposureProgram != null) {
+                    const programs = ['Unknown', 'Manual', 'Program', 'Aperture Priority', 'Shutter Priority', 'Creative', 'Action', 'Portrait', 'Landscape'];
+                    fields.exposureProgram = programs[exif.Photo.ExposureProgram] ?? undefined;
+                  }
+                  if (exif.Photo.WhiteBalance != null) {
+                    fields.whiteBalance = exif.Photo.WhiteBalance === 0 ? 'Auto' : 'Manual';
+                  }
+                  if (exif.Photo.Flash != null) {
+                    fields.flash = (exif.Photo.Flash & 1) === 1;
+                  }
+                  if (exif.Photo.DateTimeOriginal) {
+                    fields.dateTaken = exif.Photo.DateTimeOriginal instanceof Date
+                      ? exif.Photo.DateTimeOriginal.toISOString()
+                      : String(exif.Photo.DateTimeOriginal);
+                  }
+                }
+                if (exif.GPSInfo) {
+                  const lat = exif.GPSInfo.GPSLatitude;
+                  const lon = exif.GPSInfo.GPSLongitude;
+                  const latRef = exif.GPSInfo.GPSLatitudeRef;
+                  const lonRef = exif.GPSInfo.GPSLongitudeRef;
+                  if (lat && lon) {
+                    const toDecimal = (dms: number[]) => dms[0] + dms[1] / 60 + (dms[2] ?? 0) / 3600;
+                    const latDec = toDecimal(lat) * (latRef === 'S' ? -1 : 1);
+                    const lonDec = toDecimal(lon) * (lonRef === 'W' ? -1 : 1);
+                    fields.gpsLatitude = latDec;
+                    fields.gpsLongitude = lonDec;
+                  }
+                  if (exif.GPSInfo.GPSAltitude != null) {
+                    fields.gpsAltitude = exif.GPSInfo.GPSAltitude;
+                  }
+                }
+
+                console.log(`[PreviewJob] EXIF extracted for ${file.name}: camera=${fields.cameraMake} ${fields.cameraModel}, ISO=${fields.iso}, f/${fields.aperture}`);
+              } catch (exifErr) {
+                // EXIF parsing is non-fatal
+                console.warn(`[PreviewJob] EXIF parse failed for ${file.name}:`, exifErr);
+              }
+            }
+
             const metaRoot = metaRootForArchive(file.archiveRootId, root.rootPath, 'local');
             const { item } = await this.archiveMeta.updateItem(
               metaRoot,
               file.path,
               { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-              {
-                fields: {
-                  width: metadata.width,
-                  height: metadata.height,
-                  colorSpace: metadata.space ?? undefined,
-                },
-              },
+              { fields },
             );
             await this.fileRepo.update(fileId, {
               meta: item as unknown as object,

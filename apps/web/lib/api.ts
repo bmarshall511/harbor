@@ -103,6 +103,11 @@ export const files = {
     if (ids.length === 0) return Promise.resolve([] as FileDto[]);
     return request<FileDto[]>(`/files/batch?ids=${encodeURIComponent(ids.join(','))}`);
   },
+  reindex: (id: string) =>
+    request<{ ok: true; file: { id: string; name: string; mimeType: string | null; size: number; status: string; indexedAt: string } | null }>(
+      `/files/${id}/reindex`,
+      { method: 'POST' },
+    ),
 };
 
 // Tags
@@ -342,6 +347,37 @@ export const adminDeleteQueue = {
     ),
   reject: (id: string) =>
     request<{ ok: true }>(`/admin/delete-queue/${id}/reject`, { method: 'POST' }),
+};
+
+// Review queue
+export interface ReviewQueueItem {
+  file: FileDto;
+  score: number;
+  reasons: string[];
+}
+export interface ReviewQueueResponse {
+  items: ReviewQueueItem[];
+  totalCount: number;
+  reviewedCount: number;
+  needsReviewCount: number;
+  nextCursor: string | null;
+}
+export const review = {
+  queue: (params?: { cursor?: string; limit?: number; filter?: string; root?: string; folder?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.cursor) qs.set('cursor', params.cursor);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.filter) qs.set('filter', params.filter);
+    if (params?.root) qs.set('root', params.root);
+    if (params?.folder) qs.set('folder', params.folder);
+    const q = qs.toString();
+    return request<ReviewQueueResponse>(`/review${q ? `?${q}` : ''}`);
+  },
+  markReviewed: (fileId: string) =>
+    request<{ ok: true; reviewedAt: string }>('/review', {
+      method: 'POST',
+      body: JSON.stringify({ fileId }),
+    }),
 };
 
 // Preview URL helper

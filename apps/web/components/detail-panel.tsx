@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '@/lib/store';
-import { files, folders, getPreviewUrl, getFileDownloadUrl, archiveRoots } from '@/lib/api';
+import { files, folders, getPreviewUrl, getFileDownloadUrl, archiveRoots, } from '@/lib/api';
 import type { FileDto } from '@harbor/types';
 import { cn } from '@/lib/cn';
 import { formatBytes, getMimeCategory, friendlyName } from '@harbor/utils';
@@ -30,6 +30,7 @@ import {
   Users,
   PawPrint,
   Check,
+  RefreshCw,
 } from 'lucide-react';
 import { FileMetadataEditor, FolderMetadataEditor } from '@/components/metadata-editor';
 import { trackView } from '@/lib/recently-viewed';
@@ -93,6 +94,16 @@ function FileDetail({ fileId }: { fileId: string }) {
   const { data: file, isLoading } = useQuery({
     queryKey: ['file', fileId],
     queryFn: () => files.get(fileId),
+  });
+
+  const reindexMutation = useMutation({
+    mutationFn: () => files.reindex(fileId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['file', fileId] });
+      queryClient.invalidateQueries({ queryKey: ['files'] });
+      toast.success('File reindexed');
+    },
+    onError: (err: Error) => toast.error(`Reindex failed: ${err.message}`),
   });
 
   // Fetch the file's siblings (all files in the same folder, or in the
@@ -255,6 +266,15 @@ function FileDetail({ fileId }: { fileId: string }) {
             <Pencil className="h-3.5 w-3.5" />
           </button>
           <button
+            onClick={() => reindexMutation.mutate()}
+            disabled={reindexMutation.isPending}
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+            aria-label="Re-index file"
+            title="Re-index this file"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', reindexMutation.isPending && 'animate-spin')} />
+          </button>
+          <button
             onClick={() => setShowDelete(true)}
             className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
             aria-label="Delete"
@@ -288,13 +308,53 @@ function FileDetail({ fileId }: { fileId: string }) {
           })()}
         </div>
 
+        {/* EXIF / Camera info */}
+        {(() => {
+          const f = file.meta?.fields ?? {};
+          const hasExif = f.cameraMake || f.cameraModel || f.iso || f.aperture || f.shutterSpeed || f.focalLength || f.lensModel;
+          if (!hasExif) return null;
+          const camera = [f.cameraMake, f.cameraModel].filter(Boolean).join(' ');
+          return (
+            <div className="border-t border-border/50 pt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+              {camera && <InfoItem label="Camera" value={camera as string} />}
+              {f.lensModel && <InfoItem label="Lens" value={f.lensModel as string} />}
+              {f.iso != null && <InfoItem label="ISO" value={String(f.iso)} />}
+              {f.aperture != null && <InfoItem label="Aperture" value={`f/${f.aperture}`} />}
+              {f.shutterSpeed && <InfoItem label="Shutter" value={`${f.shutterSpeed}s`} />}
+              {f.focalLength != null && (
+                <InfoItem label="Focal" value={`${f.focalLength}mm${f.focalLength35mm ? ` (${f.focalLength35mm}mm)` : ''}`} />
+              )}
+            </div>
+          );
+        })()}
+
         {/* Dates */}
-        {(file.fileCreatedAt || file.fileModifiedAt) && (
-          <div className="border-t border-border/50 pt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-            {file.fileCreatedAt && <InfoItem label="Created" value={new Date(file.fileCreatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />}
-            {file.fileModifiedAt && <InfoItem label="Modified" value={new Date(file.fileModifiedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />}
-          </div>
-        )}
+        {(() => {
+          const f = file.meta?.fields ?? {};
+          const dateTaken = f.dateTaken as string | undefined;
+          const hasAnyDate = dateTaken || file.fileCreatedAt || file.fileModifiedAt;
+          if (!hasAnyDate) return null;
+          return (
+            <div className="border-t border-border/50 pt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+              {dateTaken && <InfoItem label="Taken" value={new Date(dateTaken).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />}
+              {file.fileCreatedAt && <InfoItem label="Created" value={new Date(file.fileCreatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />}
+              {file.fileModifiedAt && <InfoItem label="Modified" value={new Date(file.fileModifiedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />}
+            </div>
+          );
+        })()}
+
+        {/* GPS */}
+        {(() => {
+          const f = file.meta?.fields ?? {};
+          if (f.gpsLatitude == null || f.gpsLongitude == null) return null;
+          const lat = Number(f.gpsLatitude).toFixed(6);
+          const lon = Number(f.gpsLongitude).toFixed(6);
+          return (
+            <div className="border-t border-border/50 pt-2 text-xs">
+              <InfoItem label="Location" value={`${lat}, ${lon}`} />
+            </div>
+          );
+        })()}
 
         {/* Technical — file + path are full-width, fully readable
             (wrap, never truncated), one-click copyable, and the file

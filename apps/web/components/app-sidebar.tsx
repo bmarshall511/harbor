@@ -3,7 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
-import { archiveRoots, folders, files as filesApi, favorites as favoritesApi, collections as collectionsApi } from '@/lib/api';
+import { archiveRoots, folders, files as filesApi, favorites as favoritesApi, collections as collectionsApi, review as reviewApi } from '@/lib/api';
 import { useAuth } from '@/lib/use-auth';
 import { friendlyName } from '@harbor/utils';
 import { fetchApi } from '@/lib/fetch-api';
@@ -32,6 +32,7 @@ import {
   Globe,
   LayoutDashboard,
   Network,
+  ClipboardCheck,
 } from 'lucide-react';
 import { useState, useCallback, useRef } from 'react';
 import type { FolderDto, ArchiveRootDto } from '@harbor/types';
@@ -118,6 +119,7 @@ export function AppSidebar() {
         <SearchLink />
         <FavoritesLink />
         <ConnectionsLink />
+        <ReviewLink />
       </div>
 
       <nav className="flex-1 overflow-y-auto p-2" aria-label="Archive roots">
@@ -442,6 +444,46 @@ function ConnectionsLink() {
         aria-hidden="true"
       />
       <span>Connections</span>
+    </button>
+  );
+}
+
+function ReviewLink() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const isActive = pathname === '/review';
+  const { data } = useQuery({
+    queryKey: ['review-queue-count'],
+    queryFn: async () => {
+      try {
+        return await reviewApi.queue({ limit: 1 });
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+    retry: false,
+  });
+  const count = data?.needsReviewCount ?? 0;
+
+  return (
+    <button
+      onClick={() => router.push('/review')}
+      className={cn(
+        'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors',
+        isActive
+          ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+          : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground',
+      )}
+    >
+      <ClipboardCheck
+        className={cn('h-4 w-4', isActive && 'text-primary')}
+        aria-hidden="true"
+      />
+      <span>Review</span>
+      {count > 0 && (
+        <span className="ml-auto text-[10px] text-muted-foreground">{count}</span>
+      )}
     </button>
   );
 }

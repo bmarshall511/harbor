@@ -111,7 +111,7 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Details</h4>
         <div className="flex items-center gap-1">
-          {file.mimeType?.startsWith('image/') && (
+          {(file.mimeType?.startsWith('image/') || file.previews?.length > 0) && (
             <AiSuggestButton
               fileId={file.id}
               onSelectTitle={(v) => {
@@ -157,9 +157,36 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
         </div>
       </div>
 
-      {/* Render all fields from templates in order */}
+      {/* Title + Description — always visible, click to edit */}
+      <div className="space-y-2">
+        {editing ? (
+          <EditField label="Title" value={formData.title ?? ''} onChange={(v) => setField('title', v)} />
+        ) : (
+          <ClickToEditField
+            label="Title"
+            value={file.title}
+            placeholder="Add a title..."
+            onEdit={() => setEditing(true)}
+          />
+        )}
+        {editing ? (
+          <EditField label="Description" value={formData.description ?? ''} onChange={(v) => setField('description', v)} multiline />
+        ) : (
+          <ClickToEditField
+            label="Description"
+            value={file.description}
+            placeholder="Add a description..."
+            onEdit={() => setEditing(true)}
+          />
+        )}
+      </div>
+
+      {/* Render remaining fields from templates in order */}
       <div className="space-y-2">
         {applicableFields.map((field) => {
+          // Skip title/description — rendered above
+          if (field.key === 'title' || field.key === 'description') return null;
+
           // Tags get their own dedicated editor
           if (field.key === 'tags') {
             return <TagEditor key={field.key} entityType="FILE" entityId={file.id} tags={file.tags} />;
@@ -359,12 +386,12 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
     save.mutate(next);
   }
 
-  function add(person: Person) {
+  function add(person: Person, focusInput = false) {
     if (selected.some((p) => personKey(p) === personKey(person))) return;
     commit([...selected, person]);
     setQuery('');
     setHighlight(0);
-    inputRef.current?.focus();
+    if (focusInput) inputRef.current?.focus();
   }
 
   function remove(person: Person) {
@@ -618,8 +645,8 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
             } else if (e.key === 'Enter') {
               e.preventDefault();
               const pick = suggestions[highlight];
-              if (pick) add(pick.person);
-              else if (query.trim()) add({ kind: 'free', name: query.trim() });
+              if (pick) add(pick.person, true);
+              else if (query.trim()) add({ kind: 'free', name: query.trim() }, true);
             } else if (e.key === 'Escape') {
               setOpen(false);
               setQuery('');
@@ -638,7 +665,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
                 <button
                   key={s.key}
                   type="button"
-                  onMouseDown={(e) => { e.preventDefault(); add(s.person); }}
+                  onMouseDown={(e) => { e.preventDefault(); add(s.person, true); }}
                   onMouseEnter={() => setHighlight(i)}
                   className={cn(
                     'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs',
@@ -774,6 +801,28 @@ function MetaField({ label, value }: { label: string; value: string }) {
     <div className="flex gap-2 text-xs">
       <span className="shrink-0 text-muted-foreground w-20">{label}</span>
       <span className="break-words">{value}</span>
+    </div>
+  );
+}
+
+function ClickToEditField({ label, value, placeholder, onEdit }: {
+  label: string;
+  value: string | null | undefined;
+  placeholder: string;
+  onEdit: () => void;
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-[11px] font-medium text-muted-foreground">{label}</label>
+      <button
+        onClick={onEdit}
+        className={cn(
+          'w-full rounded border border-transparent px-2 py-1 text-left text-xs transition-colors hover:border-input hover:bg-accent/50',
+          value ? 'text-foreground' : 'text-muted-foreground/50 italic',
+        )}
+      >
+        {value || placeholder}
+      </button>
     </div>
   );
 }
