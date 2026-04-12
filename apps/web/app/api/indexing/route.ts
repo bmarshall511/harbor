@@ -49,6 +49,20 @@ export async function POST(request: Request) {
       dropboxCredentials = { appKey, appSecret };
     }
 
+    // Check if there's already a RUNNING index job for this archive.
+    // Prevents duplicate jobs from concurrent server+client continuations.
+    const existingRunning = await db.backgroundJob.findFirst({
+      where: {
+        type: 'index',
+        status: 'RUNNING',
+        metadata: { path: ['archiveRootId'], equals: archiveRootId },
+      },
+    });
+    if (existingRunning && continueJobId) {
+      // Another chunk is already running — skip this duplicate
+      return NextResponse.json({ message: 'Already running', status: 'running' });
+    }
+
     // Only cancel existing jobs when starting fresh (not continuing)
     if (!continueJobId) {
       await db.backgroundJob.updateMany({

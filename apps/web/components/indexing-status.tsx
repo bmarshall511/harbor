@@ -101,38 +101,8 @@ export function IndexingStatus() {
     }
   }, [activeJob]);
 
-  // Auto-continue partial indexing jobs (Vercel timeout chunking).
-  // When a job completes with partial:true, automatically trigger
-  // a new indexing request to continue where it left off.
-  const continuingRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!jobs) return;
-    for (const job of jobs) {
-      if (
-        job.status === 'COMPLETED' &&
-        job.type === 'index' &&
-        (job.metadata as any)?.partial === true &&
-        (job.metadata as any)?.archiveRootId &&
-        !continuingRef.current.has(job.id)
-      ) {
-        continuingRef.current.add(job.id);
-        const archiveRootId = (job.metadata as any).archiveRootId;
-        const resumeAt = (job.metadata as any).resumeAt ?? 0;
-        // Auto-continue after a short delay, passing this job's ID
-        // so the next chunk reads resumeAt and skips already-processed entries
-        setTimeout(() => {
-          fetch('/api/indexing', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ archiveRootId, continueJobId: job.id }),
-          }).catch(() => {});
-          queryClient.invalidateQueries({ queryKey: ['jobs-status'] });
-        }, 2000);
-      }
-    }
-  }, [jobs, queryClient]);
-
   // Track completion for auto-refresh
+  // (Server-side continuation handles chunked indexing — no client polling needed)
   useEffect(() => {
     if (!jobs) return;
     const justCompleted = jobs.find(
