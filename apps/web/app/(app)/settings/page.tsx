@@ -2212,53 +2212,44 @@ function AiSettingsSection() {
                     <option value="professional">Professional</option>
                     <option value="casual">Casual</option>
                     <option value="minimal">Minimal</option>
-                    <option value="technical">Technical</option>
                     <option value="journalistic">Journalistic</option>
                   </optgroup>
                   <optgroup label="Creative">
-                    <option value="creative">Creative</option>
                     <option value="poetic">Poetic</option>
-                    <option value="dramatic">Dramatic</option>
-                    <option value="nostalgic">Nostalgic</option>
                     <option value="cinematic">Cinematic</option>
                     <option value="whimsical">Whimsical</option>
-                    <option value="mysterious">Mysterious</option>
+                    <option value="noir">Film Noir</option>
+                    <option value="fairytale">Fairytale</option>
+                  </optgroup>
+                  <optgroup label="Emotional">
                     <option value="romantic">Romantic</option>
+                    <option value="nostalgic">Nostalgic</option>
+                    <option value="melancholic">Melancholic</option>
+                    <option value="uplifting">Uplifting</option>
+                    <option value="dark">Dark & Moody</option>
+                    <option value="ethereal">Ethereal</option>
                   </optgroup>
                   <optgroup label="Fun">
                     <option value="humorous">Humorous</option>
                     <option value="sarcastic">Sarcastic</option>
                     <option value="clickbait">Clickbait</option>
                     <option value="roast">Roast</option>
-                    <option value="meme">Meme-style</option>
-                    <option value="deadpan">Deadpan</option>
+                    <option value="meme">Meme / Gen-Z</option>
+                    <option value="deadpan">Deadpan Dry</option>
                   </optgroup>
-                  <optgroup label="Intimate">
+                  <optgroup label="Sensual">
                     <option value="sensual">Sensual</option>
-                    <option value="alluring">Alluring</option>
-                    <option value="intimate">Intimate</option>
-                    <option value="seductive">Seductive</option>
                     <option value="boudoir">Boudoir</option>
-                    <option value="risque">Risqué</option>
-                    <option value="provocative">Provocative</option>
+                    <option value="seductive">Seductive</option>
+                    <option value="romance-novel">Romance Novel</option>
                   </optgroup>
-                  <optgroup label="Adult">
-                    <option value="naughty">Naughty</option>
-                    <option value="x-rated">X-Rated</option>
-                    <option value="explicit">Explicit</option>
-                    <option value="porn">Porn</option>
+                  <optgroup label="Explicit">
                     <option value="erotica">Erotica</option>
-                    <option value="fetish">Fetish</option>
                     <option value="dirty-talk">Dirty Talk</option>
+                    <option value="porn-title">Porn Title</option>
+                    <option value="fetish">Fetish / Kink</option>
                     <option value="taboo">Taboo</option>
-                  </optgroup>
-                  <optgroup label="Mood">
-                    <option value="dark">Dark</option>
-                    <option value="uplifting">Uplifting</option>
-                    <option value="melancholic">Melancholic</option>
-                    <option value="ethereal">Ethereal</option>
-                    <option value="edgy">Edgy</option>
-                    <option value="serene">Serene</option>
+                    <option value="raw">Raw & Unfiltered</option>
                   </optgroup>
                 </select>
               </div>

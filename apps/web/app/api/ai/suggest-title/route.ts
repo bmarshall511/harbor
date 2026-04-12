@@ -339,8 +339,46 @@ function buildPrompt(opts: {
   }
 
   parts.push(`\nGenerate exactly ${opts.count} title suggestions for this image.`);
-  parts.push(`Each title should be ${opts.tone} in tone and no longer than ${opts.maxLength} characters.`);
-  parts.push('Titles should be concise, descriptive, and suitable for an archive catalog.');
+
+  // Tone-specific instructions so each tone produces genuinely distinct output
+  const toneInstructions: Record<string, string> = {
+    descriptive: 'Write clear, factual titles that describe exactly what is in the image.',
+    professional: 'Write polished, corporate-appropriate titles suitable for a portfolio or gallery.',
+    casual: 'Write relaxed, conversational titles like a friend captioning a photo.',
+    minimal: 'Write ultra-short, 2-4 word titles. Less is more.',
+    journalistic: 'Write titles like newspaper headlines — factual, punchy, attention-grabbing.',
+    poetic: 'Write lyrical, metaphorical titles with rhythm and imagery. Think poetry.',
+    cinematic: 'Write titles like movie scenes — dramatic, visual, with a sense of motion.',
+    whimsical: 'Write playful, imaginative titles with a sense of wonder and delight.',
+    noir: 'Write titles in the style of a 1940s detective film — moody, shadowy, hardboiled.',
+    fairytale: 'Write titles like the opening of a fairy tale — enchanting, magical, storybook.',
+    romantic: 'Write titles dripping with love, longing, and tenderness.',
+    nostalgic: 'Write titles that evoke warm memories, the passage of time, and bittersweetness.',
+    melancholic: 'Write titles with sadness, loss, and quiet beauty.',
+    uplifting: 'Write titles that inspire joy, hope, and positivity.',
+    dark: 'Write titles with an ominous, brooding, gothic atmosphere.',
+    ethereal: 'Write dreamy, otherworldly titles that feel like they exist between reality and fantasy.',
+    humorous: 'Write genuinely funny titles — jokes, puns, or absurd observations.',
+    sarcastic: 'Write titles dripping with sarcasm and irony. Say the opposite of what you mean.',
+    clickbait: 'Write outrageous clickbait headlines. "You Won\'t BELIEVE..." style.',
+    roast: 'Write titles that roast/mock the subject — brutal, savage, but funny.',
+    meme: 'Write titles in internet/meme culture style — slang, abbreviations, chaotic energy.',
+    deadpan: 'Write titles that are deliberately boring, matter-of-fact, and anti-dramatic.',
+    sensual: 'Write titles that are tastefully suggestive — hint at intimacy without being explicit.',
+    boudoir: 'Write titles appropriate for a boudoir photography portfolio — elegant, empowering, confident.',
+    seductive: 'Write titles that tease and tempt — flirtatious, alluring, inviting.',
+    'romance-novel': 'Write titles like the cover of a steamy romance novel — passionate, breathless, dramatic.',
+    erotica: 'Write titles like published literary erotica — artful but explicitly sexual.',
+    'dirty-talk': 'Write titles as if someone is talking dirty — direct, graphic, first-person.',
+    'porn-title': 'Write titles in the style of adult film titles — explicit, direct, provocative.',
+    fetish: 'Write titles that emphasize kink elements — leather, latex, power dynamics, fetish gear.',
+    taboo: 'Write titles that lean into the forbidden — secret encounters, guilty pleasures.',
+    raw: 'Write titles that are viscerally graphic and unfiltered — no euphemisms, no softening.',
+  };
+
+  const instruction = toneInstructions[opts.tone] ?? `Each title should be ${opts.tone} in tone.`;
+  parts.push(instruction);
+  parts.push(`Each title must be no longer than ${opts.maxLength} characters.`);
   parts.push('All titles MUST be in Title Case (capitalize the first letter of each major word).');
   parts.push('Do NOT include quotes around the titles.');
   parts.push('\nAlso generate:');
