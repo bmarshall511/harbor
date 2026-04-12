@@ -41,6 +41,7 @@ import {
   Network,
   ArrowRight,
   ArrowLeftRight,
+  X,
 } from 'lucide-react';
 import { useAuth } from '@/lib/use-auth';
 import { useState, useEffect } from 'react';
@@ -2677,6 +2678,121 @@ const RELATIONSHIP_TYPES = [
   { value: 'pet_of', label: 'Pet Of' },
 ];
 
+const INVERSE_DISPLAY: Record<string, string> = {
+  parent: 'Child',
+  child: 'Parent',
+  grandparent: 'Grandchild',
+  grandchild: 'Grandparent',
+  'aunt/uncle': 'Niece/Nephew',
+  'niece/nephew': 'Aunt/Uncle',
+  manager: 'Report',
+  report: 'Manager',
+  owner: 'Pet Of',
+  pet_of: 'Owner',
+};
+
+const SYMMETRIC_DISPLAY = new Set([
+  'spouse', 'partner', 'sibling', 'friend', 'cousin', 'colleague',
+]);
+
+/** Compact inline person picker — shows avatar + name as a button that opens a dropdown. */
+function PersonPickerInline({
+  people,
+  selectedId,
+  onSelect,
+  placeholder,
+}: {
+  people: Array<{ id: string | null; name: string | null; avatarUrl: string | null; entityType?: string }>;
+  selectedId: string;
+  onSelect: (id: string) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const selected = people.find((p) => p.id === selectedId);
+  const filtered = people.filter((p) => p.id && (!search || p.name?.toLowerCase().includes(search.toLowerCase())));
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => { setOpen(!open); setSearch(''); }}
+        className={cn(
+          'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition',
+          selected
+            ? 'border-primary/30 bg-primary/5 hover:bg-primary/10'
+            : 'border-dashed border-border text-muted-foreground hover:border-primary/30 hover:text-foreground',
+        )}
+      >
+        {selected ? (
+          <>
+            {selected.avatarUrl ? (
+              <img src={selected.avatarUrl} alt="" className={cn('h-6 w-6 object-cover', selected.entityType === 'PET' ? 'rounded-md' : 'rounded-full')} />
+            ) : (
+              <div className={cn('flex h-6 w-6 items-center justify-center', selected.entityType === 'PET' ? 'rounded-md bg-amber-500/10' : 'rounded-full bg-muted')}>
+                {selected.entityType === 'PET' ? <PawPrint className="h-3 w-3 text-amber-500" /> : <Users className="h-3 w-3 text-muted-foreground" />}
+              </div>
+            )}
+            <span className="font-medium">{selected.name}</span>
+          </>
+        ) : (
+          <>
+            <Users className="h-4 w-4" />
+            <span>{placeholder}</span>
+          </>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-border bg-popover shadow-xl">
+          <div className="p-2">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search..."
+              className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+              autoFocus
+              onBlur={() => setTimeout(() => setOpen(false), 150)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto px-1 pb-1">
+            {filtered.slice(0, 50).map((p) => {
+              if (!p.id) return null;
+              const isPet = p.entityType === 'PET';
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); onSelect(p.id!); setOpen(false); }}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs transition',
+                    selectedId === p.id ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-accent',
+                  )}
+                >
+                  {p.avatarUrl ? (
+                    <img src={p.avatarUrl} alt="" className={cn('h-6 w-6 object-cover', isPet ? 'rounded-md' : 'rounded-full')} />
+                  ) : (
+                    <div className={cn('flex h-6 w-6 items-center justify-center', isPet ? 'rounded-md bg-amber-500/10' : 'rounded-full bg-muted')}>
+                      {isPet ? <PawPrint className="h-3 w-3 text-amber-500" /> : <Users className="h-3 w-3 text-muted-foreground" />}
+                    </div>
+                  )}
+                  <span className="flex-1 truncate">{p.name}</span>
+                  {isPet && <span className="text-[9px] text-amber-500">Pet</span>}
+                  {selectedId === p.id && <Check className="h-3 w-3 text-primary" />}
+                </button>
+              );
+            })}
+            {filtered.length === 0 && (
+              <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">No matches</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PersonRelationshipsSection() {
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
@@ -2767,70 +2883,78 @@ function PersonRelationshipsSection() {
         </button>
       </div>
 
-      {showAdd && (
-        <div className="mt-3 rounded-lg border border-border bg-card p-4 space-y-4">
-          {/* Person pickers with avatars */}
-          <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
-            <PersonPickerGrid
-              people={dbPeople}
-              selectedId={sourceId}
-              onSelect={setSourceId}
-              label="From"
-            />
-            <div className="flex flex-col items-center gap-1 pt-6">
-              <ArrowRight className="h-4 w-4 text-muted-foreground" />
+      {showAdd && (() => {
+        const sourcePerson = dbPeople.find((p) => p.id === sourceId);
+        const targetPerson = dbPeople.find((p) => p.id === targetId);
+        const inverseLabel = INVERSE_DISPLAY[relType] ?? relType;
+        const isSymmetric = SYMMETRIC_DISPLAY.has(relType);
+
+        return (
+          <div className="mt-3 rounded-lg border border-border bg-card p-4 space-y-4">
+            {/* Sentence builder: [Person] is [type] of [Person] */}
+            <div className="flex flex-wrap items-center gap-2">
+              <PersonPickerInline
+                people={dbPeople}
+                selectedId={sourceId}
+                onSelect={setSourceId}
+                placeholder="Select person..."
+              />
+
+              <span className="text-xs text-muted-foreground">is</span>
+
               <select
                 value={relType}
                 onChange={(e) => setRelType(e.target.value)}
-                className="w-28 rounded-md border border-border bg-background px-1.5 py-1 text-[11px] text-center focus:outline-none focus:ring-1 focus:ring-ring"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 {RELATIONSHIP_TYPES.map((t) => (
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </select>
+
+              <span className="text-xs text-muted-foreground">of</span>
+
+              <PersonPickerInline
+                people={dbPeople.filter((p) => p.id !== sourceId)}
+                selectedId={targetId}
+                onSelect={setTargetId}
+                placeholder="Select person..."
+              />
             </div>
-            <PersonPickerGrid
-              people={dbPeople.filter((p) => p.id !== sourceId)}
-              selectedId={targetId}
-              onSelect={setTargetId}
-              label="To"
-            />
-          </div>
 
-          {/* Options row */}
-          <div className="flex items-center gap-3">
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="Custom label (optional)"
-              className="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap cursor-pointer">
-              <input type="checkbox" checked={bidir} onChange={(e) => setBidir(e.target.checked)} className="h-3.5 w-3.5 rounded border-border" />
-              Bidirectional
-            </label>
-          </div>
+            {/* Preview of what will be created */}
+            {sourceId && targetId && (
+              <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                <p className="font-medium text-foreground">Will create:</p>
+                <p>• {sourcePerson?.name ?? '?'} → <span className="font-medium">{RELATIONSHIP_TYPES.find((t) => t.value === relType)?.label ?? relType}</span> → {targetPerson?.name ?? '?'}</p>
+                <p className="text-muted-foreground/70">
+                  • {targetPerson?.name ?? '?'} → <span className="font-medium">{isSymmetric ? (RELATIONSHIP_TYPES.find((t) => t.value === relType)?.label ?? relType) : inverseLabel}</span> → {sourcePerson?.name ?? '?'}
+                  <span className="ml-1 italic">(auto)</span>
+                </p>
+              </div>
+            )}
 
-          {/* Actions */}
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => { setShowAdd(false); setSourceId(''); setTargetId(''); }}
-              className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => createMut.mutate()}
-              disabled={!sourceId || !targetId || createMut.isPending}
-              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-            >
-              {createMut.isPending ? 'Creating...' : 'Create'}
-            </button>
+            {/* Actions */}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowAdd(false); setSourceId(''); setTargetId(''); }}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => createMut.mutate()}
+                disabled={!sourceId || !targetId || createMut.isPending}
+                className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+              >
+                {createMut.isPending ? 'Creating...' : 'Create relationship'}
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {isLoading ? (
         <div className="mt-4 text-sm text-muted-foreground">Loading...</div>
@@ -3189,117 +3313,6 @@ function PersonAddDropdown({
             {filtered.length === 0 && (
               <p className="px-2 py-2 text-center text-[11px] text-muted-foreground">No matches</p>
             )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Person Picker (searchable dropdown for relationships) ────────────────────
-
-function PersonPickerGrid({
-  people,
-  selectedId,
-  onSelect,
-  label,
-}: {
-  people: Array<{ id: string | null; name: string | null; avatarUrl: string | null; entityType?: string }>;
-  selectedId: string;
-  onSelect: (id: string) => void;
-  label: string;
-}) {
-  const [search, setSearch] = useState('');
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const selected = people.find((p) => p.id === selectedId);
-  const filtered = people.filter((p) =>
-    p.id && (!search || p.name?.toLowerCase().includes(search.toLowerCase())),
-  );
-
-  return (
-    <div>
-      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-
-      {/* Selected person display */}
-      {selected ? (
-        <button
-          type="button"
-          onClick={() => { setDropdownOpen(true); setSearch(''); }}
-          className="flex w-full items-center gap-2.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-left transition hover:bg-primary/10"
-        >
-          {(() => {
-            const isPet = selected.entityType === 'PET';
-            return selected.avatarUrl ? (
-              <img src={selected.avatarUrl} alt="" className={cn('h-8 w-8 object-cover', isPet ? 'rounded-lg' : 'rounded-full')} />
-            ) : (
-              <div className={cn('flex h-8 w-8 items-center justify-center', isPet ? 'rounded-lg bg-amber-500/10' : 'rounded-full bg-muted')}>
-                {isPet ? <PawPrint className="h-3.5 w-3.5 text-amber-500" /> : <Users className="h-3.5 w-3.5 text-muted-foreground" />}
-              </div>
-            );
-          })()}
-          <span className="flex-1 truncate text-sm font-medium">{selected.name}</span>
-          <Pencil className="h-3 w-3 text-muted-foreground" />
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={() => { setDropdownOpen(true); setSearch(''); }}
-          className="flex w-full items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground hover:border-primary/30 hover:text-foreground transition"
-        >
-          <Users className="h-4 w-4" />
-          Select person...
-        </button>
-      )}
-
-      {/* Searchable dropdown */}
-      {dropdownOpen && (
-        <div className="relative mt-1">
-          <div className="absolute left-0 right-0 z-30 rounded-lg border border-border bg-popover shadow-xl">
-            <div className="p-2">
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search..."
-                className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                autoFocus
-                onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') setDropdownOpen(false);
-                }}
-              />
-            </div>
-            <div className="max-h-48 overflow-y-auto px-1 pb-1">
-              {filtered.slice(0, 50).map((p) => {
-                if (!p.id) return null;
-                const isPet = p.entityType === 'PET';
-                const isActive = selectedId === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onMouseDown={(e) => { e.preventDefault(); onSelect(p.id!); setDropdownOpen(false); }}
-                    className={cn(
-                      'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs transition',
-                      isActive ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-accent',
-                    )}
-                  >
-                    {p.avatarUrl ? (
-                      <img src={p.avatarUrl} alt="" className={cn('h-6 w-6 object-cover', isPet ? 'rounded-md' : 'rounded-full')} />
-                    ) : (
-                      <div className={cn('flex h-6 w-6 items-center justify-center', isPet ? 'rounded-md bg-amber-500/10' : 'rounded-full bg-muted')}>
-                        {isPet ? <PawPrint className="h-3 w-3 text-amber-500" /> : <Users className="h-3 w-3 text-muted-foreground" />}
-                      </div>
-                    )}
-                    <span className="flex-1 truncate">{p.name}</span>
-                    {isPet && <span className="text-[9px] text-amber-500">Pet</span>}
-                    {isActive && <Check className="h-3 w-3 text-primary" />}
-                  </button>
-                );
-              })}
-              {filtered.length === 0 && (
-                <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">No matches</p>
-              )}
-            </div>
           </div>
         </div>
       )}

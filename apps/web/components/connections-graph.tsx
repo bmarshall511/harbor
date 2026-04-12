@@ -29,7 +29,7 @@ import {
   EdgeLabelRenderer,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { PawPrint, User, Network, TreePine, Shuffle } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { getLayoutedElements } from '@/lib/graph-layout';
@@ -209,8 +209,8 @@ function RelationshipEdge({
           className={cn(
             'absolute pointer-events-none px-2 py-0.5 rounded-full text-[9px] font-medium',
             'bg-background/90 border border-border/50 backdrop-blur-sm',
-            'opacity-0 group-hover:opacity-100 transition-opacity',
-            selected && '!opacity-100',
+            'transition-opacity',
+            selected ? 'opacity-100' : 'opacity-70',
           )}
           style={{
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
