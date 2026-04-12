@@ -81,14 +81,42 @@ export async function POST(request: Request) {
 
     // Check if the job hit the deadline and needs to continue
     if (indexingJob.wasInterrupted()) {
+      const stats = indexingJob.getStats();
+
+      // SERVER-DRIVEN continuation: fire the next chunk from the server
+      // so it doesn't depend on the browser tab being active.
+      // Use the origin from the request to build the URL.
+      const origin = request.headers.get('origin')
+        ?? request.headers.get('x-forwarded-host')
+        ?? new URL(request.url).origin;
+      const continueUrl = `${origin.startsWith('http') ? origin : `https://${origin}`}/api/indexing`;
+
+      // Extract session cookie to authenticate the continuation request
+      const cookie = request.headers.get('cookie') ?? '';
+
+      // Fire-and-forget — don't await, this runs after we return
+      globalThis.fetch(continueUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': cookie,
+        },
+        body: JSON.stringify({
+          archiveRootId,
+          continueJobId: stats.jobId,
+        }),
+      }).catch((err) => {
+        console.error('[Indexing] Server-side continuation failed:', err);
+      });
+
       return NextResponse.json({
-        message: 'Indexing in progress',
+        message: 'Indexing in progress — next chunk will start automatically',
         archiveRootId,
         status: 'in_progress',
         continue: true,
-        jobId: indexingJob.getStats().jobId,
-        filesProcessed: indexingJob.getStats().filesProcessed,
-        foldersProcessed: indexingJob.getStats().foldersProcessed,
+        jobId: stats.jobId,
+        filesProcessed: stats.filesProcessed,
+        foldersProcessed: stats.foldersProcessed,
       });
     }
 
