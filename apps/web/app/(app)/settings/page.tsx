@@ -2054,8 +2054,8 @@ function AiSettingsSection() {
                 <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
               </optgroup>
               <optgroup label="Google Gemini">
-                <option value="gemini-2.5-flash-preview-05-20">Gemini 2.5 Flash</option>
-                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
               </optgroup>
             </select>
           </div>
