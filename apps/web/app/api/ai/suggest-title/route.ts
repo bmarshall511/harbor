@@ -321,7 +321,9 @@ function buildPrompt(opts: {
     parts.push(`This image is in a folder called "${opts.folderName}".`);
   }
   if (opts.existingPeople && opts.existingPeople.length > 0) {
-    parts.push(`The people/pets in this image are: ${opts.existingPeople.join(', ')}. USE THEIR ACTUAL NAMES in the titles and descriptions instead of generic terms like "a woman" or "a man".`);
+    // Use first names only for a natural, informal feel
+    const firstNames = opts.existingPeople.map((n) => n.split(' ')[0]);
+    parts.push(`The people/pets in this image are: ${firstNames.join(', ')}. USE THEIR FIRST NAMES (not full names) in titles and descriptions instead of generic terms like "a woman" or "a man". Keep it natural and informal.`);
   }
   if (opts.existingTags && opts.existingTags.length > 0) {
     parts.push(`Existing tags on this image: ${opts.existingTags.join(', ')}. Use these as context for what the image contains.`);
