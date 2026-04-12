@@ -72,7 +72,7 @@ interface AiSuggestButtonProps {
   fileId: string;
   onSelectTitle: (value: string) => void;
   onSelectDescription?: (value: string) => void;
-  onSelectTags?: (tags: string[]) => void;
+  onSelectTags?: (tags: string[]) => void | Promise<void>;
   enabled?: boolean;
 }
 
@@ -134,20 +134,27 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
     }
   };
 
-  const handleApply = () => {
+  const [applying, setApplying] = useState(false);
+
+  const handleApply = async () => {
     if (!data) return;
-    // Apply selected title
-    const title = data.suggestions[selectedTitle];
-    if (title) onSelectTitle(title);
-    // Apply selected description
-    if (selectedDesc >= 0 && data.descriptions[selectedDesc] && onSelectDescription) {
-      onSelectDescription(data.descriptions[selectedDesc]);
+    setApplying(true);
+    try {
+      // Apply selected title (sync — sets form state)
+      const title = data.suggestions[selectedTitle];
+      if (title) onSelectTitle(title);
+      // Apply selected description (sync — sets form state)
+      if (selectedDesc >= 0 && data.descriptions[selectedDesc] && onSelectDescription) {
+        onSelectDescription(data.descriptions[selectedDesc]);
+      }
+      // Apply checked tags (async — calls API directly)
+      if (selectedTags.size > 0 && onSelectTags) {
+        await onSelectTags([...selectedTags]);
+      }
+    } finally {
+      setApplying(false);
+      setOpen(false);
     }
-    // Apply checked tags
-    if (selectedTags.size > 0 && onSelectTags) {
-      onSelectTags([...selectedTags]);
-    }
-    setOpen(false);
   };
 
   const handleClose = () => {
@@ -407,10 +414,14 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
                 <button
                   type="button"
                   onClick={handleApply}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition"
+                  disabled={applying}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition"
                 >
-                  <Check className="h-4 w-4" />
-                  Apply Selected
+                  {applying ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Applying...</>
+                  ) : (
+                    <><Check className="h-4 w-4" /> Apply Selected</>
+                  )}
                 </button>
               </div>
             )}
