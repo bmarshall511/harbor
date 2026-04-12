@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server';
 import { db } from '@harbor/database';
 import { requireAuth, requirePermission } from '@/lib/auth';
 
+const DISMISSED_PREF_KEY = 'dismissed_relationship_suggestions';
+
 /**
  * GET /api/person-relationships/suggestions
  *
  * Analyzes the existing relationship graph and identifies missing
  * connections that should logically exist. Returns suggestions grouped
- * by inference rule.
+ * by inference rule. Filters out dismissed suggestions per user.
  *
  * Rules checked:
  *   1. Missing siblings: A is parent of X and Y, but X↔Y not siblings
@@ -26,6 +28,14 @@ export async function GET(request: Request) {
 
   const denied = requirePermission(auth, 'settings.people', 'access');
   if (denied) return denied;
+
+  // Load dismissed suggestions for this user
+  const dismissedPref = await db.userPreference.findUnique({
+    where: { userId_key: { userId: auth.userId, key: DISMISSED_PREF_KEY } },
+  });
+  const dismissedSet = new Set<string>(
+    dismissedPref ? JSON.parse(dismissedPref.value) as string[] : [],
+  );
 
   const [allPersons, allRels] = await Promise.all([
     db.person.findMany({ select: { id: true, name: true, entityType: true } }),
@@ -169,20 +179,30 @@ export async function GET(request: Request) {
   }
 
   // ── Rule 5: Duplicate relationships ───────────────────────────
-  const pairCounts = new Map<string, number>();
-  const duplicates: Array<{ sourcePersonId: string; targetPersonId: string; relationType: string; count: number }> = [];
+  const pairGroups = new Map<string, string[]>(); // key → list of record IDs
+  const duplicates: Array<{
+    sourcePersonId: string; sourceName: string;
+    targetPersonId: string; targetName: string;
+    relationType: string; count: number;
+    keepId: string; deleteIds: string[];
+  }> = [];
   for (const r of allRels) {
     const key = `${r.sourcePersonId}:${r.targetPersonId}:${r.relationType}`;
-    pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
+    if (!pairGroups.has(key)) pairGroups.set(key, []);
+    pairGroups.get(key)!.push(r.id);
   }
-  for (const [key, count] of pairCounts) {
-    if (count > 1) {
+  for (const [key, ids] of pairGroups) {
+    if (ids.length > 1) {
       const [s, t, type] = key.split(':');
       duplicates.push({
         sourcePersonId: s!,
+        sourceName: nameMap.get(s!) ?? 'Unknown',
         targetPersonId: t!,
+        targetName: nameMap.get(t!) ?? 'Unknown',
         relationType: type!,
-        count,
+        count: ids.length,
+        keepId: ids[0]!,
+        deleteIds: ids.slice(1),
       });
     }
   }
@@ -203,10 +223,15 @@ export async function GET(request: Request) {
     relationType: string; expectedInverse: string;
   }> = [];
 
+  // Check each unique pair+type for its inverse. Use a dedup set so we
+  // only flag each missing inverse once (not once per duplicate row).
+  const checkedPairs = new Set<string>();
   for (const r of allRels) {
-    if (r.reciprocalId) continue; // Primary record — check if inverse exists
     const inverse = SYMMETRIC.has(r.relationType) ? r.relationType : INVERSE_MAP[r.relationType];
     if (!inverse) continue;
+    const pairKey = `${r.sourcePersonId}:${r.targetPersonId}:${r.relationType}`;
+    if (checkedPairs.has(pairKey)) continue;
+    checkedPairs.add(pairKey);
     const hasInverse = relSet.has(`${r.targetPersonId}:${r.sourcePersonId}:${inverse}`);
     if (!hasInverse) {
       missingReciprocals.push({
@@ -350,15 +375,66 @@ export async function GET(request: Request) {
     });
   }
 
-  const totalIssues = suggestions.length + duplicates.length + missingReciprocals.length
-    + missingGroupMembers.length + suggestedNewGroups.length;
+  // Filter out dismissed suggestions
+  function suggestionKey(s: string, t: string, type: string) {
+    return [s, t, type].sort().join(':');
+  }
+
+  const filteredSuggestions = suggestions.filter(
+    (s) => !dismissedSet.has(suggestionKey(s.sourcePersonId, s.targetPersonId, s.relationType)),
+  );
+  const filteredReciprocals = missingReciprocals.filter(
+    (r) => !dismissedSet.has(suggestionKey(r.sourcePersonId, r.targetPersonId, r.relationType)),
+  );
+  const filteredGroupMembers = missingGroupMembers.filter(
+    (m) => !dismissedSet.has(`group:${m.personId}:${m.groupId}`),
+  );
+
+  const totalIssues = filteredSuggestions.length + duplicates.length + filteredReciprocals.length
+    + filteredGroupMembers.length + suggestedNewGroups.length;
 
   return NextResponse.json({
-    suggestions,
+    suggestions: filteredSuggestions,
     duplicates,
-    missingReciprocals,
-    missingGroupMembers,
+    missingReciprocals: filteredReciprocals,
+    missingGroupMembers: filteredGroupMembers,
     suggestedNewGroups,
     totalIssues,
   });
+}
+
+/**
+ * POST /api/person-relationships/suggestions
+ *
+ * Dismiss a suggestion. Stores the key in user preferences.
+ * Body: { key: string }
+ */
+export async function POST(request: Request) {
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+
+  const body = await request.json().catch(() => ({}));
+  const key = body.key as string | undefined;
+
+  if (!key) {
+    return NextResponse.json({ error: 'key is required' }, { status: 400 });
+  }
+
+  // Load existing dismissed list
+  const existing = await db.userPreference.findUnique({
+    where: { userId_key: { userId: auth.userId, key: DISMISSED_PREF_KEY } },
+  });
+
+  const dismissed: string[] = existing ? JSON.parse(existing.value) : [];
+  if (!dismissed.includes(key)) {
+    dismissed.push(key);
+  }
+
+  await db.userPreference.upsert({
+    where: { userId_key: { userId: auth.userId, key: DISMISSED_PREF_KEY } },
+    create: { userId: auth.userId, key: DISMISSED_PREF_KEY, value: JSON.stringify(dismissed) },
+    update: { value: JSON.stringify(dismissed) },
+  });
+
+  return NextResponse.json({ ok: true, dismissed: dismissed.length });
 }

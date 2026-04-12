@@ -38,6 +38,7 @@ import {
   Volume2,
   VolumeX,
   Trash2,
+  Copy,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 
@@ -611,6 +612,19 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
           )}
         </div>
 
+        {/* Technical details */}
+        <div className="space-y-1.5 text-xs">
+          <CopyableItem label="File" value={file.name} />
+          <CopyableItem label="Path" value={file.path} />
+          {file.hash && <CopyableItem label="Hash" value={file.hash} truncate />}
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground shrink-0 w-12">Status</span>
+            <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium',
+              file.status === 'INDEXED' ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'
+            )}>{file.status}</span>
+          </div>
+        </div>
+
         {/* Metadata editor — reuses the existing component which handles
             title, description, caption, altText, tags, people, multiselect,
             custom fields, and AI suggestions */}
@@ -891,6 +905,29 @@ function ReviewVideoPlayer({ file, onOpenViewer }: { file: FileDto; onOpenViewer
 }
 
 // ─── Supporting Components ────────────────────────────────────
+
+function CopyableItem({ label, value, truncate }: { label: string; value: string; truncate?: boolean }) {
+  const display = truncate && value.length > 24
+    ? `${value.slice(0, 10)}...${value.slice(-10)}`
+    : value;
+  return (
+    <div className="flex items-start gap-2 group">
+      <span className="text-muted-foreground shrink-0 w-12 pt-px">{label}</span>
+      <span
+        className="min-w-0 flex-1 select-text break-all leading-snug font-mono text-[10px]"
+        title={value}
+      >
+        {display}
+      </span>
+      <button
+        onClick={() => { navigator.clipboard.writeText(value); toast.success('Copied'); }}
+        className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent"
+      >
+        <Copy className="h-2.5 w-2.5" />
+      </button>
+    </div>
+  );
+}
 
 function InfoItem({ label, value }: { label: string; value: string }) {
   return (

@@ -3798,7 +3798,12 @@ function PersonRelationshipsSection() {
           targetPersonId: string; targetName: string;
           relationType: string; rule: string; reason: string;
         }>;
-        duplicates: Array<{ sourcePersonId: string; targetPersonId: string; relationType: string; count: number }>;
+        duplicates: Array<{
+          sourcePersonId: string; sourceName: string;
+          targetPersonId: string; targetName: string;
+          relationType: string; count: number;
+          keepId: string; deleteIds: string[];
+        }>;
         missingReciprocals: Array<{
           sourcePersonId: string; sourceName: string;
           targetPersonId: string; targetName: string;
@@ -3823,6 +3828,7 @@ function PersonRelationshipsSection() {
 
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  // Fix missing relationship (new pair — use bulk)
   const fixSuggestion = useMutation({
     mutationFn: async (rel: { sourcePersonId: string; targetPersonId: string; relationType: string }) => {
       const res = await fetch('/api/person-relationships/bulk', {
@@ -3841,27 +3847,131 @@ function PersonRelationshipsSection() {
     },
   });
 
+  // Fix missing reciprocal (one direction exists, add only the other)
+  const fixReciprocal = useMutation({
+    mutationFn: async (rel: { sourcePersonId: string; targetPersonId: string; relationType: string }) => {
+      const res = await fetch('/api/person-relationships/fix-reciprocal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rel),
+      });
+      if (!res.ok) throw new Error('Failed');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-relationships'] });
+      queryClient.invalidateQueries({ queryKey: ['relationship-suggestions'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      toast.success('Reciprocal fixed');
+    },
+  });
+
+  // Fix duplicates by deleting extra records
+  const fixDuplicate = useMutation({
+    mutationFn: async (deleteIds: string[]) => {
+      for (const id of deleteIds) {
+        await fetch(`/api/person-relationships/${id}`, { method: 'DELETE' }).catch(() => {});
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['person-relationships'] });
+      queryClient.invalidateQueries({ queryKey: ['relationship-suggestions'] });
+      queryClient.invalidateQueries({ queryKey: ['connections'] });
+      toast.success('Duplicates removed');
+    },
+  });
+
+  const dismissSuggestion = useMutation({
+    mutationFn: async (key: string) => {
+      const res = await fetch('/api/person-relationships/suggestions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      });
+      if (!res.ok) throw new Error('Failed');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['relationship-suggestions'] });
+    },
+  });
+
   const fixAllSuggestions = useMutation({
     mutationFn: async () => {
-      if (!suggestionsData) return;
-      const rels = suggestionsData.suggestions.map((s) => ({
+      if (!suggestionsData) return { relsCreated: 0, groupsAdded: 0, dupsRemoved: 0 };
+
+      // 1. Fix missing relationships (via bulk — these are genuinely new)
+      const newRels = suggestionsData.suggestions.map((s) => ({
         sourcePersonId: s.sourcePersonId,
         targetPersonId: s.targetPersonId,
         relationType: s.relationType,
       }));
-      const res = await fetch('/api/person-relationships/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ relationships: rels }),
-      });
-      if (!res.ok) throw new Error('Failed');
-      return res.json() as Promise<{ created: number; skipped: number }>;
+
+      let relsCreated = 0;
+      if (newRels.length > 0) {
+        const res = await fetch('/api/person-relationships/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ relationships: newRels }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          relsCreated = data.created ?? 0;
+        }
+      }
+
+      // 2. Fix missing reciprocals (via fix-reciprocal endpoint —
+      // only creates the single missing direction, not both)
+      for (const r of suggestionsData.missingReciprocals) {
+        try {
+          const res = await fetch('/api/person-relationships/fix-reciprocal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sourcePersonId: r.targetPersonId,
+              targetPersonId: r.sourcePersonId,
+              relationType: r.expectedInverse,
+            }),
+          });
+          if (res.ok) relsCreated++;
+        } catch { /* skip */ }
+      }
+
+      // 3. Fix missing group memberships
+      let groupsAdded = 0;
+      for (const m of suggestionsData.missingGroupMembers) {
+        try {
+          const res = await fetch(`/api/person-groups/${m.groupId}/members`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ personId: m.personId }),
+          });
+          if (res.ok) groupsAdded++;
+        } catch { /* skip */ }
+      }
+
+      // 4. Fix duplicates
+      let dupsRemoved = 0;
+      for (const d of suggestionsData.duplicates) {
+        for (const id of d.deleteIds) {
+          try {
+            await fetch(`/api/person-relationships/${id}`, { method: 'DELETE' });
+            dupsRemoved++;
+          } catch { /* skip */ }
+        }
+      }
+
+      return { relsCreated, groupsAdded, dupsRemoved };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['person-relationships'] });
       queryClient.invalidateQueries({ queryKey: ['relationship-suggestions'] });
+      queryClient.invalidateQueries({ queryKey: ['person-groups'] });
       queryClient.invalidateQueries({ queryKey: ['connections'] });
-      toast.success(`Created ${data?.created ?? 0} missing relationships`);
+      const parts = [];
+      if (data?.relsCreated) parts.push(`${data.relsCreated} relationship${data.relsCreated !== 1 ? 's' : ''}`);
+      if (data?.groupsAdded) parts.push(`${data.groupsAdded} group membership${data.groupsAdded !== 1 ? 's' : ''}`);
+      if (data?.dupsRemoved) parts.push(`${data.dupsRemoved} duplicate${data.dupsRemoved !== 1 ? 's' : ''} removed`);
+      toast.success(parts.length > 0 ? `Fixed: ${parts.join(', ')}` : 'All issues resolved');
     },
   });
 
@@ -3931,13 +4041,13 @@ function PersonRelationshipsSection() {
               </span>
             </div>
             <div className="flex items-center gap-2">
-              {suggestionsData && suggestionsData.suggestions.length > 0 && (
+              {suggestionsData && totalIssues > 0 && (
                 <button
                   onClick={() => fixAllSuggestions.mutate()}
                   disabled={fixAllSuggestions.isPending}
                   className="rounded-md bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-600 hover:bg-amber-500/20 disabled:opacity-50"
                 >
-                  {fixAllSuggestions.isPending ? 'Creating...' : `Fix all ${suggestionsData.suggestions.length}`}
+                  {fixAllSuggestions.isPending ? 'Fixing...' : `Fix all ${totalIssues}`}
                 </button>
               )}
               <button
@@ -3972,6 +4082,13 @@ function PersonRelationshipsSection() {
                         >
                           Add
                         </button>
+                        <button
+                          onClick={() => dismissSuggestion.mutate([s.sourcePersonId, s.targetPersonId, s.relationType].sort().join(':'))}
+                          disabled={dismissSuggestion.isPending}
+                          className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
+                        >
+                          Ignore
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -3986,8 +4103,19 @@ function PersonRelationshipsSection() {
                   </p>
                   <div className="space-y-1">
                     {suggestionsData.duplicates.map((d, i) => (
-                      <div key={i} className="rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground">
-                        {d.relationType} appears {d.count}x between same pair
+                      <div key={i} className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs">
+                        <span className="font-medium truncate">{d.sourceName}</span>
+                        <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{d.relationType}</span>
+                        <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground/40" />
+                        <span className="font-medium truncate">{d.targetName}</span>
+                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{d.count}x (removing {d.deleteIds.length})</span>
+                        <button
+                          onClick={() => fixDuplicate.mutate(d.deleteIds)}
+                          disabled={fixDuplicate.isPending}
+                          className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20"
+                        >
+                          Fix
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -4008,11 +4136,18 @@ function PersonRelationshipsSection() {
                           Missing: {r.targetName} → {r.expectedInverse} → {r.sourceName}
                         </span>
                         <button
-                          onClick={() => fixSuggestion.mutate({ sourcePersonId: r.targetPersonId, targetPersonId: r.sourcePersonId, relationType: r.expectedInverse })}
-                          disabled={fixSuggestion.isPending}
+                          onClick={() => fixReciprocal.mutate({ sourcePersonId: r.targetPersonId, targetPersonId: r.sourcePersonId, relationType: r.expectedInverse })}
+                          disabled={fixReciprocal.isPending}
                           className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20"
                         >
                           Fix
+                        </button>
+                        <button
+                          onClick={() => dismissSuggestion.mutate([r.sourcePersonId, r.targetPersonId, r.relationType].sort().join(':'))}
+                          disabled={dismissSuggestion.isPending}
+                          className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
+                        >
+                          Ignore
                         </button>
                       </div>
                     ))}
@@ -4042,6 +4177,13 @@ function PersonRelationshipsSection() {
                           className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20"
                         >
                           Add
+                        </button>
+                        <button
+                          onClick={() => dismissSuggestion.mutate(`group:${m.personId}:${m.groupId}`)}
+                          disabled={dismissSuggestion.isPending}
+                          className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
+                        >
+                          Ignore
                         </button>
                       </div>
                     ))}
