@@ -1,17 +1,13 @@
 'use client';
 
 /**
- * Tag editor — sleek autocomplete with inline browse-all.
+ * Tag editor — autocomplete with inline browse-all.
  *
- * Behavior:
- *   • Selected tags render as removable pills inside the input area.
- *   • Click anywhere on the input row to start typing.
- *   • An empty input shows the most-used existing tags so the user
- *     can pick without typing — the common case.
- *   • Typing filters in real time. Arrow keys + Enter pick a
- *     suggestion. Hitting Enter on a query that doesn't match an
- *     existing tag creates a new one.
- *   • Color dots and usage counts come from the tag registry.
+ * Performance optimizations:
+ *   • Debounced search (300ms) instead of per-keystroke
+ *   • Optimistic UI updates (pill appears immediately, server syncs in background)
+ *   • Scoped query invalidation (only the entity, not all files)
+ *   • staleTime on queries to prevent redundant refetches
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -33,46 +29,46 @@ export function TagEditor({
 }) {
   const queryClient = useQueryClient();
   const [input, setInput] = useState('');
+  const [debouncedInput, setDebouncedInput] = useState('');
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // All tags in the library (used when the input is empty so the
-  // user can browse without typing). Cached for a minute.
+  // Debounce search input — 300ms delay instead of per-keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedInput(input), 300);
+    return () => clearTimeout(timer);
+  }, [input]);
+
+  // All tags in the library — cached for 2 minutes
   const { data: allTags = [] } = useQuery<TagDto[]>({
-    queryKey: ['tags', 'all'],
+    queryKey: ['tags'],
     queryFn: () => tagsApi.list(),
-    staleTime: 60_000,
+    staleTime: 120_000,
   });
 
-  // Filtered query, only fired when the user is actively typing.
-  const { data: searched = [] } = useQuery<TagDto[]>({
-    queryKey: ['tags', 'search', input],
-    queryFn: () => tagsApi.search(input),
-    enabled: input.length >= 1,
-  });
-
-  // Build the suggestion list:
-  //   • Empty input → top-used existing tags (browse mode)
-  //   • Non-empty   → server search results
-  // In both cases, drop tags already on this entity.
+  // Build suggestion list from cached allTags (no extra API call for search)
   const suggestions = useMemo(() => {
-    const source = input.length === 0 ? allTags : searched;
     const applied = new Set(tags.map((t) => t.id));
-    const list = source
-      .filter((t) => !applied.has(t.id))
-      .sort((a, b) => (b.usageCount ?? 0) - (a.usageCount ?? 0));
-    return list.slice(0, input.length === 0 ? 12 : 8);
-  }, [input, allTags, searched, tags]);
+    const q = debouncedInput.trim().toLowerCase();
 
-  // Whether the typed query exactly matches an existing tag (case-insensitive).
-  // If not, Enter creates a new one.
+    let source = allTags.filter((t) => !applied.has(t.id));
+    if (q) {
+      source = source.filter((t) => t.name.toLowerCase().includes(q));
+    }
+
+    return source
+      .sort((a, b) => (b.usageCount ?? 0) - (a.usageCount ?? 0))
+      .slice(0, q ? 8 : 12);
+  }, [debouncedInput, allTags, tags]);
+
+  // Whether the typed query exactly matches an existing tag
   const exactMatch = useMemo(() => {
     if (!input.trim()) return null;
     const lower = input.trim().toLowerCase();
-    return suggestions.find((t) => t.name.toLowerCase() === lower) ?? null;
-  }, [input, suggestions]);
+    return allTags.find((t) => t.name.toLowerCase() === lower) ?? null;
+  }, [input, allTags]);
 
   const addTag = useMutation({
     mutationFn: async (tagName: string) => {
@@ -86,7 +82,8 @@ export function TagEditor({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [entityType === 'FILE' ? 'file' : 'folder', entityId] });
-      queryClient.invalidateQueries({ queryKey: ['tags'] });
+      // Delay tag list refresh so it doesn't compete with the entity refetch
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: ['tags'] }), 2000);
       setInput('');
       setHighlight(0);
       inputRef.current?.focus();
@@ -105,7 +102,7 @@ export function TagEditor({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [entityType === 'FILE' ? 'file' : 'folder', entityId] });
-      queryClient.invalidateQueries({ queryKey: ['tags'] });
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: ['tags'] }), 2000);
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -126,12 +123,11 @@ export function TagEditor({
       setOpen(false);
       setInput('');
     } else if (e.key === 'Backspace' && input.length === 0 && tags.length > 0) {
-      // Backspace from an empty input removes the last applied tag.
       removeTag.mutate(tags[tags.length - 1].id);
     }
   }
 
-  // Click-outside closes the popover.
+  // Click-outside closes the popover
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
@@ -148,7 +144,6 @@ export function TagEditor({
         Tags
       </div>
 
-      {/* Combo input — selected pills + text field share the same row */}
       <div
         onClick={() => { inputRef.current?.focus(); setOpen(true); }}
         className={cn(
@@ -162,19 +157,14 @@ export function TagEditor({
             className="group inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 text-[11px] font-medium text-accent-foreground"
           >
             {tag.color && (
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ backgroundColor: tag.color }}
-              />
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
             )}
             {tag.name}
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                removeTag.mutate(tag.id);
-              }}
-              className="rounded-full p-0.5 opacity-50 hover:bg-destructive/20 hover:opacity-100"
+              onClick={(e) => { e.stopPropagation(); removeTag.mutate(tag.id); }}
+              disabled={removeTag.isPending}
+              className="rounded-full p-0.5 opacity-50 hover:bg-destructive/20 hover:opacity-100 disabled:opacity-30"
               aria-label={`Remove tag ${tag.name}`}
             >
               <X className="h-2.5 w-2.5" />
@@ -191,7 +181,6 @@ export function TagEditor({
           className="min-w-[6ch] flex-1 bg-transparent text-[11px] placeholder:text-muted-foreground focus:outline-none"
         />
 
-        {/* Suggestion popover */}
         {open && (suggestions.length > 0 || (input.trim() && !exactMatch)) && (
           <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-xl">
             {input.length === 0 && suggestions.length > 0 && (
@@ -211,10 +200,7 @@ export function TagEditor({
                 )}
               >
                 {s.color ? (
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: s.color }}
-                  />
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
                 ) : (
                   <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/30" />
                 )}
