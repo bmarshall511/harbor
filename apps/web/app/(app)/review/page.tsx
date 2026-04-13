@@ -487,7 +487,7 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
 
         {/* Preview */}
         <div className="flex flex-1 items-center justify-center overflow-hidden p-4 min-h-0">
-          {hasPreview && !isVideo && (file.previews?.length > 0 || category === 'image') ? (
+          {hasPreview && !isVideo ? (
             <ReviewImagePreview
               file={file}
               onOpenViewer={() => openViewer(file.id, [file])}
