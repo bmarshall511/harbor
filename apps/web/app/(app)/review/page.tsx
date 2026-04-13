@@ -527,9 +527,11 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
         </div>
       </div>
 
-      {/* Right: Reuse the same FileDetail component as the item pullout */}
+      {/* Right: Reuse the same FileDetail component as the item pullout.
+          Skip the inline preview since the left column already renders
+          a large copy of the same image. */}
       <div className="w-96 shrink-0 overflow-y-auto border-l border-border bg-card">
-        <FileDetail fileId={file.id} />
+        <FileDetail fileId={file.id} hidePreview />
       </div>
     </div>
   );

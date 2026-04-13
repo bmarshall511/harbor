@@ -90,7 +90,13 @@ export function DetailPanel() {
   );
 }
 
-export function FileDetail({ fileId }: { fileId: string }) {
+/**
+ * `hidePreview` skips the inline preview surface at the top of the
+ * panel. Used by the review page, which already shows a large
+ * preview in its own left column — rendering a second copy in the
+ * sidebar wastes space and slows the review flow down.
+ */
+export function FileDetail({ fileId, hidePreview = false }: { fileId: string; hidePreview?: boolean }) {
   const [showRename, setShowRename] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const openViewer = useAppStore((s) => s.openViewer);
@@ -221,18 +227,23 @@ export function FileDetail({ fileId }: { fileId: string }) {
     <div className="space-y-4 p-4">
       {/* Preview — routes Dropbox files that aren't cached yet
           through the smart "Make available offline" flow before
-          rendering the real preview. */}
-      <DetailPreviewSurface
-        file={file}
-        isVideo={isVideo}
-        hasPreview={!!hasPreview}
-        onView={() => handleOpenViewer()}
-      />
-      {/* Generic fallback if ContentPreview returns nothing */}
-      {!hasPreview && !isVideo && !file.mimeType?.startsWith('text/') && file.mimeType !== 'application/json' && file.mimeType !== 'application/pdf' && (
-        <div className="flex aspect-video items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
-          <FileIconLarge mimeType={file.mimeType} />
-        </div>
+          rendering the real preview. Skipped on the review page
+          since the same preview is already shown in its left column. */}
+      {!hidePreview && (
+        <>
+          <DetailPreviewSurface
+            file={file}
+            isVideo={isVideo}
+            hasPreview={!!hasPreview}
+            onView={() => handleOpenViewer()}
+          />
+          {/* Generic fallback if ContentPreview returns nothing */}
+          {!hasPreview && !isVideo && !file.mimeType?.startsWith('text/') && file.mimeType !== 'application/json' && file.mimeType !== 'application/pdf' && (
+            <div className="flex aspect-video items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
+              <FileIconLarge mimeType={file.mimeType} />
+            </div>
+          )}
+        </>
       )}
 
       {/* Title + actions */}
