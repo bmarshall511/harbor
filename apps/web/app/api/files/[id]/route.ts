@@ -194,6 +194,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   // delta ops are resolved AFTER acquiring the lock so each op sees
   // the latest server state — never a stale client cache.
   const metaRoot = metaRootForArchive(before.archiveRootId, root.rootPath, providerTypeForRoot(root.providerType));
+  const debugLog = process.env.HARBOR_DEBUG_METADATA === '1';
   const { item, resolvedFields } = await withFileWriteLock(id, async () => {
     // Read the current sidecar BY UUID so the baseline matches the
     // exact JSON we'll write back. Reading by path could resolve to
@@ -204,11 +205,24 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     // the file's existing tags with just whatever the user added.
     const existing = await archiveMeta.readItemByUuid(metaRoot, before.harborItemId);
 
+    if (debugLog) {
+      console.log('[PATCH/files/:id] ─────────────────────────────');
+      console.log('  fileId       :', id);
+      console.log('  harborItemId :', before.harborItemId);
+      console.log('  metaRoot     :', metaRoot);
+      console.log('  body         :', JSON.stringify(body));
+      console.log('  existing.fields:', existing?.fields ? JSON.stringify(existing.fields) : '(null)');
+    }
+
     const fields: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(fieldsRaw)) {
       if (isFieldDelta(value)) {
         const currentArr = (existing?.fields?.[key] as unknown[] | undefined) ?? [];
-        fields[key] = applyFieldDelta(currentArr, value);
+        const result = applyFieldDelta(currentArr, value);
+        if (debugLog) {
+          console.log(`  delta[${key}]: baseline=${JSON.stringify(currentArr)} op=${JSON.stringify(value)} result=${JSON.stringify(result)}`);
+        }
+        fields[key] = result;
       } else if (value === null) {
         fields[key] = [];
       } else {
@@ -231,6 +245,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       // path-based reads agree.
       { core, fields, forceUuid: before.harborItemId },
     );
+
+    if (debugLog) {
+      console.log('  written.fields:', JSON.stringify(item.fields));
+    }
 
     // Mirror the derived DB columns from the freshly-written JSON.
     // Kept inside the lock so a concurrent reader never sees the JSON
