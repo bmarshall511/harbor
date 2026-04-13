@@ -73,10 +73,19 @@ export function TagEditor({
   const addTag = useMutation({
     mutationFn: async (tagName: string) => {
       const endpoint = entityType === 'FILE' ? 'files' : 'folders';
+      // PATCH treats `tags` as a full replacement (that's what lets
+      // us remove tags), so we send the existing tag list plus the
+      // new name. Dedupe case-insensitively so clicking the same
+      // suggestion twice is a no-op instead of a double entry.
+      const existing = tags.map((t) => t.name);
+      const seen = new Set(existing.map((n) => n.toLowerCase()));
+      const nextTags = seen.has(tagName.trim().toLowerCase())
+        ? existing
+        : [...existing, tagName];
       const res = await fetch(`/api/${endpoint}/${entityId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tags: [tagName] }),
+        body: JSON.stringify({ tags: nextTags }),
       });
       if (!res.ok) throw new Error('Failed to add tag');
     },

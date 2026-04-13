@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { usePathname } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '@/lib/store';
 import { files, folders, getPreviewUrl, getFileDownloadUrl, archiveRoots, } from '@/lib/api';
@@ -47,6 +48,14 @@ export function DetailPanel() {
   const entityType = useAppStore((s) => s.detailPanelEntityType);
   const entityId = useAppStore((s) => s.detailPanelEntityId);
   const closeDetailPanel = useAppStore((s) => s.closeDetailPanel);
+  const pathname = usePathname();
+
+  // The review page renders its own inline FileDetail to the right
+  // of the review queue, so the global DetailPanel would duplicate
+  // that sidebar whenever a user opens the panel on another page and
+  // then navigates to /review. Suppress it there — the review page's
+  // own panel takes over.
+  if (pathname?.startsWith('/review')) return null;
 
   if (!isOpen || !entityType || !entityId) return null;
 

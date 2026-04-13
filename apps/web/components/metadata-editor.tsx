@@ -152,10 +152,27 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
                 // Single PATCH containing every picked field — title,
                 // description, and tags all land in one sidecar write,
                 // so the server-side lock serialises them atomically
-                // against any other in-flight edit. The shared
-                // `mutation` hook handles invalidation, so no manual
-                // query refresh is needed here.
-                await mutation.mutateAsync(payload);
+                // against any other in-flight edit.
+                //
+                // PATCH tags are now full replacement, so we have to
+                // merge the AI suggestions with whatever is already on
+                // the file before sending; otherwise picking tags from
+                // the AI panel would silently wipe out the file's
+                // existing tags.
+                const merged = { ...payload };
+                if (payload.tags && payload.tags.length > 0) {
+                  const existing = (file.tags ?? []).map((t) => t.name);
+                  const seen = new Set(existing.map((n) => n.toLowerCase()));
+                  const combined = [...existing];
+                  for (const name of payload.tags) {
+                    const key = name.trim().toLowerCase();
+                    if (!key || seen.has(key)) continue;
+                    seen.add(key);
+                    combined.push(name);
+                  }
+                  merged.tags = combined;
+                }
+                await mutation.mutateAsync(merged);
               }}
             />
           )}
