@@ -314,16 +314,20 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
   }, [file, field.key]);
 
   const [selected, setSelected] = useState<string[]>(initial);
-  // Only sync from server when the file ID changes (navigating to
-  // a different file), NOT on every refetch — otherwise in-flight
-  // mutations get their local state stomped by stale server data.
-  const prevFileIdRef = useRef(file.id);
+  // Track how many saves are currently in flight. We only want to
+  // keep the local state frozen while the user has an unsettled
+  // edit — once everything is saved, the server is the source of
+  // truth and we *must* adopt any fresh data it returns, otherwise
+  // the component will sit on a stale value forever (the bug where
+  // "sometimes saves don't take": they did save, but the local
+  // state was initialised from stale cache on remount and the old
+  // file.id guard then refused to pick up the refetch).
+  const pendingSavesRef = useRef(0);
   useEffect(() => {
-    if (prevFileIdRef.current !== file.id) {
+    if (pendingSavesRef.current === 0) {
       setSelected(initial);
-      prevFileIdRef.current = file.id;
     }
-  }, [file.id, initial]);
+  }, [initial]);
 
   const saveMutation = useMutation({
     mutationFn: (values: string[]) => filesApi.update(file.id, { [field.key]: values }),
@@ -341,11 +345,19 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
       }, 1500);
     },
     onError: (err: Error) => toast.error(err.message),
+    onSettled: () => {
+      // Every mutate() bumps the counter by one; each settle
+      // bumps it back down. The ref is the right tool here — we
+      // don't want a counter state change to trigger a re-render
+      // on every click.
+      pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
+    },
   });
 
   const toggle = (value: string) => {
     const next = selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value];
     setSelected(next);
+    pendingSavesRef.current += 1;
     saveMutation.mutate(next);
   };
 
@@ -391,15 +403,20 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   // Current selection persisted on this file
   const initial = useMemo<Person[]>(() => normalizePeople(file.meta?.fields?.[field.key]), [file, field.key]);
   const [selected, setSelected] = useState<Person[]>(initial);
-  // Only reset from server data when navigating to a different file,
-  // not on every refetch (which would stomp in-flight edits).
-  const prevFileIdRef = useRef(file.id);
+  // Sync `selected` to whatever the server has ONLY when there are
+  // no saves currently in flight. With the old "reset on file.id
+  // change" guard, a component that mounted with stale cached data
+  // (e.g. after navigating back to a previously-viewed file on the
+  // review page) would stay stuck on that stale value forever —
+  // the refetch arrived but the guard refused to apply it because
+  // the id hadn't changed. The counter lets us always adopt fresh
+  // server data while still protecting mid-edit state.
+  const pendingSavesRef = useRef(0);
   useEffect(() => {
-    if (prevFileIdRef.current !== file.id) {
+    if (pendingSavesRef.current === 0) {
       setSelected(initial);
-      prevFileIdRef.current = file.id;
     }
-  }, [file.id, initial]);
+  }, [initial]);
 
   // Registered users (app accounts)
   const { data: registered = [] } = useQuery({
@@ -446,10 +463,14 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
       }, 1500);
     },
     onError: (err: Error) => toast.error(err.message),
+    onSettled: () => {
+      pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
+    },
   });
 
   function commit(next: Person[]) {
     setSelected(next);
+    pendingSavesRef.current += 1;
     save.mutate(next);
   }
 
