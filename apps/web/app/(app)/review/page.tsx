@@ -174,29 +174,28 @@ export default function ReviewPage() {
     },
   });
 
-  const advance = useCallback((countAsReviewed: boolean) => {
+  const advance = useCallback((markAsReviewed: boolean) => {
     if (!currentItem) return;
     setDirection(1);
-    markReviewed.mutate(currentItem.file.id);
+
+    if (markAsReviewed) {
+      markReviewed.mutate(currentItem.file.id);
+      setSession((s) => ({ ...s, reviewedToday: s.reviewedToday + 1 }));
+    }
 
     // Find the next unvisited item
     const currentVisited = new Set(history.map((h) => h.file.id));
     const next = queueItems.find((item) => !currentVisited.has(item.file.id));
 
     if (next) {
-      // Trim any forward history (if user went back then advances again)
       const trimmed = history.slice(0, historyIndex + 1);
       setHistory([...trimmed, next]);
       setHistoryIndex(trimmed.length);
     }
-    // else: no more items, stay on current
-
-    if (countAsReviewed) {
-      setSession((s) => ({ ...s, reviewedToday: s.reviewedToday + 1 }));
-    }
   }, [currentItem, history, historyIndex, queueItems, markReviewed]);
 
   const goNext = useCallback(() => advance(true), [advance]);
+  const goSkip = useCallback(() => advance(false), [advance]);
 
   const goPrev = useCallback(() => {
     if (historyIndex <= 0) return;
@@ -232,6 +231,13 @@ export default function ReviewPage() {
           e.preventDefault();
           goPrev();
           break;
+        case 's':
+        case 'S':
+          if (!e.metaKey && !e.ctrlKey) {
+            e.preventDefault();
+            goSkip();
+          }
+          break;
         case '?':
           e.preventDefault();
           setShowShortcuts((v) => !v);
@@ -244,7 +250,7 @@ export default function ReviewPage() {
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [goNext, goPrev]);
+  }, [goNext, goPrev, goSkip]);
 
   // Focus container on mount for keyboard capture
   useEffect(() => {
@@ -397,13 +403,23 @@ export default function ReviewPage() {
           <FolderContext file={currentItem.file} />
         )}
 
-        <button
-          onClick={goNext}
-          className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          Next
-          <ChevronRight className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={goSkip}
+            className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            title="Skip without marking as reviewed"
+          >
+            <SkipForward className="h-3.5 w-3.5" />
+            Skip
+          </button>
+          <button
+            onClick={goNext}
+            className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            Next
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {/* Shortcuts overlay */}
@@ -1110,6 +1126,7 @@ function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
         </div>
         <div className="space-y-2.5 text-sm">
           <ShortcutRow keys={['→']} label="Next (mark reviewed)" />
+          <ShortcutRow keys={['S']} label="Skip (no review mark)" />
           <ShortcutRow keys={['←']} label="Previous" />
           <ShortcutRow keys={['Tab']} label="Next field" />
           <ShortcutRow keys={['?']} label="Toggle shortcuts" />
