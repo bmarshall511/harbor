@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { FolderRepository, ArchiveRootRepository, TagRepository } from '@harbor/database';
+import { FolderRepository, ArchiveRootRepository } from '@harbor/database';
 import { ArchiveMetadataService } from '@harbor/providers';
 import { requireAuth, requirePermission } from '@/lib/auth';
 import { audit } from '@/lib/audit';
@@ -7,7 +7,6 @@ import { emit } from '@/lib/events';
 
 const repo = new FolderRepository();
 const rootRepo = new ArchiveRootRepository();
-const tagRepo = new TagRepository();
 const archiveMeta = new ArchiveMetadataService();
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -54,8 +53,20 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const body = await request.json();
 
-  // Write to archive JSON (source of truth) — both local and remote
-  // archives go through the same metadata service.
+  // Folder tags are managed exclusively through
+  // `POST /api/folders/:id/items/tags` so the request body is never
+  // ambiguous about whether it's a full replacement or an add.
+  if (body.tags !== undefined) {
+    return NextResponse.json(
+      {
+        code: 'USE_ITEMS_ROUTE',
+        message: `Tags must be edited via POST /api/folders/${id}/items/tags with {op,value}`,
+      },
+      { status: 400 },
+    );
+  }
+
+  // Write scalar fields to the canonical folder JSON.
   const root = await rootRepo.findById(before.archiveRootId);
   if (root) {
     const { metaRootForArchive } = await import('@harbor/jobs');
@@ -69,11 +80,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       eventDate: body.eventDate,
       location: body.location,
       coverItemId: body.coverFileId,
-      ...(body.tags ? { tags: body.tags } : {}),
     });
   }
 
-  // Sync to DB cache
+  // Sync to DB cache.
   const updated = await repo.update(id, {
     description: body.description,
     eventDate: body.eventDate ? new Date(body.eventDate) : undefined,
@@ -81,28 +91,19 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     coverFileId: body.coverFileId,
   });
 
-  // Handle tag additions. Accepts both the legacy plain-array shape
-  // (`{tags: ['a', 'b']}`) and the delta shape (`{tags: {add: 'a'}}`
-  // or `{tags: {add: ['a', 'b']}}`) so the folder TagEditor can use
-  // the same call site as the file editor.
-  const tagsToAdd: string[] = [];
-  if (Array.isArray(body.tags)) {
-    tagsToAdd.push(...body.tags.filter((t: unknown): t is string => typeof t === 'string'));
-  } else if (body.tags && typeof body.tags === 'object' && 'add' in body.tags) {
-    const add = (body.tags as { add: unknown }).add;
-    if (Array.isArray(add)) {
-      tagsToAdd.push(...add.filter((t: unknown): t is string => typeof t === 'string'));
-    } else if (typeof add === 'string') {
-      tagsToAdd.push(add);
-    }
-  }
-  for (const tagName of tagsToAdd) {
-    const tag = await tagRepo.findOrCreate(tagName);
-    await tagRepo.addToFolder(id, tag.id);
-  }
-
-  await audit(auth, 'update', 'FOLDER', id, { description: before.description, location: before.location, eventDate: before.eventDate }, { description: body.description, location: body.location, eventDate: body.eventDate });
-  emit('folder.updated', { folderId: id, path: before.path, archiveRootId: before.archiveRootId }, { archiveRootId: before.archiveRootId, userId: auth.userId });
+  await audit(
+    auth,
+    'update',
+    'FOLDER',
+    id,
+    { description: before.description, location: before.location, eventDate: before.eventDate },
+    { description: body.description, location: body.location, eventDate: body.eventDate },
+  );
+  emit(
+    'folder.updated',
+    { folderId: id, path: before.path, archiveRootId: before.archiveRootId },
+    { archiveRootId: before.archiveRootId, userId: auth.userId },
+  );
 
   return NextResponse.json(updated);
 }

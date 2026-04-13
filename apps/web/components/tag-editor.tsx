@@ -72,15 +72,15 @@ export function TagEditor({
 
   const addTag = useMutation({
     mutationFn: async (tagName: string) => {
+      // Dedicated items route — the server applies `add` against the
+      // LIVE sidecar value under its per-file write lock. There is
+      // no client-side baseline to get wrong: the request body only
+      // carries the SINGLE tag we want added, never the full list.
       const endpoint = entityType === 'FILE' ? 'files' : 'folders';
-      // PATCH accepts a delta op so we don't have to ship the full
-      // tag list (which would silently clobber any tag the user's
-      // cache hadn't yet seen). The server applies `add` against
-      // the LIVE sidecar value under its per-file write lock.
-      const res = await fetch(`/api/${endpoint}/${entityId}`, {
-        method: 'PATCH',
+      const res = await fetch(`/api/${endpoint}/${entityId}/items/tags`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tags: { add: tagName } }),
+        body: JSON.stringify({ op: 'add', value: tagName }),
       });
       if (!res.ok) throw new Error('Failed to add tag');
     },

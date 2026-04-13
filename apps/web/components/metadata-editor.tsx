@@ -160,20 +160,29 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
             <AiSuggestButton
               fileId={file.id}
               onApply={async (payload) => {
-                // Single PATCH so all the picked content lands in one
-                // sidecar write under the server's per-file lock. We
-                // ship the AI tags as an `add` delta — the server
-                // applies them against the live tag list, so the
-                // file's existing tags are preserved no matter what
-                // the client cache happens to hold right now.
-                const body: Record<string, unknown> = {};
-                if (payload.title) body.title = payload.title;
-                if (payload.description) body.description = payload.description;
-                if (payload.tags && payload.tags.length > 0) {
-                  body.tags = { add: payload.tags };
+                // Title/description go through the scalar PATCH route
+                // (one shared sidecar write). Tags go through the
+                // dedicated items route, one call per tag — each runs
+                // under the per-file lock so they serialise cleanly
+                // and never trample the file's existing tags.
+                const scalarBody: Record<string, unknown> = {};
+                if (payload.title) scalarBody.title = payload.title;
+                if (payload.description) scalarBody.description = payload.description;
+                if (Object.keys(scalarBody).length > 0) {
+                  await mutation.mutateAsync(scalarBody);
                 }
-                if (Object.keys(body).length > 0) {
-                  await mutation.mutateAsync(body);
+                if (payload.tags && payload.tags.length > 0) {
+                  for (const tagName of payload.tags) {
+                    const res = await fetch(`/api/files/${file.id}/items/tags`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ op: 'add', value: tagName }),
+                    });
+                    if (!res.ok) {
+                      console.error('[AiApply] Failed to add tag', tagName);
+                    }
+                  }
+                  queryClient.invalidateQueries({ queryKey: ['file', file.id] });
                 }
               }}
             />
@@ -338,8 +347,21 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
   }, [initial]);
 
   const saveMutation = useMutation({
-    mutationFn: (op: { add?: string; remove?: string }) =>
-      filesApi.update(file.id, { [field.key]: op }),
+    mutationFn: async (op: { op: 'add' | 'remove'; value: string }) => {
+      // Dedicated items route — the server applies the op against
+      // the LIVE sidecar value under the per-file write lock. The
+      // request body never contains the full array, so a stale
+      // client cache cannot wipe values it hasn't seen.
+      const res = await fetch(`/api/files/${file.id}/items/${field.key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(op),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: `Request failed (${res.status})` }));
+        throw new Error(err.message ?? `Request failed (${res.status})`);
+      }
+    },
     onSuccess: () => {
       if (invalidateTimerRef.current) clearTimeout(invalidateTimerRef.current);
       invalidateTimerRef.current = setTimeout(() => {
@@ -351,12 +373,9 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
       }, 1500);
     },
     onError: (err: Error, op) => {
-      // Roll back the optimistic flip so the UI reflects what's
-      // actually on the server.
       setSelected((prev) => {
-        if (op.add) return prev.filter((v) => v !== op.add);
-        if (op.remove) return prev.includes(op.remove) ? prev : [...prev, op.remove];
-        return prev;
+        if (op.op === 'add') return prev.filter((v) => v !== op.value);
+        return prev.includes(op.value) ? prev : [...prev, op.value];
       });
       toast.error(err.message);
     },
@@ -369,7 +388,7 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
     const isOn = selected.includes(value);
     setSelected((prev) => (isOn ? prev.filter((v) => v !== value) : [...prev, value]));
     pendingSavesRef.current += 1;
-    saveMutation.mutate(isOn ? { remove: value } : { add: value });
+    saveMutation.mutate(isOn ? { op: 'remove', value } : { op: 'add', value });
   };
 
   return (
@@ -457,8 +476,21 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
 
   const saveInvalidateRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const save = useMutation({
-    mutationFn: (op: { add?: Person; remove?: Person }) =>
-      filesApi.update(file.id, { [field.key]: op }),
+    mutationFn: async (op: { op: 'add' | 'remove'; value: Person }) => {
+      // Dedicated items route — same per-file lock + sidecar-by-uuid
+      // semantics as the rest of the metadata pipeline. Only the
+      // single person we're adding / removing is shipped, so a stale
+      // client cache cannot wipe people we haven't seen.
+      const res = await fetch(`/api/files/${file.id}/items/${field.key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(op),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: `Request failed (${res.status})` }));
+        throw new Error(err.message ?? `Request failed (${res.status})`);
+      }
+    },
     onSuccess: () => {
       if (saveInvalidateRef.current) clearTimeout(saveInvalidateRef.current);
       saveInvalidateRef.current = setTimeout(() => {
@@ -471,12 +503,9 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
       }, 1500);
     },
     onError: (err: Error, op) => {
-      // Roll back the optimistic local update so the UI matches
-      // what the server actually has.
       setSelected((prev) => {
-        if (op.add) return prev.filter((p) => personKey(p) !== personKey(op.add!));
-        if (op.remove) return prev.some((p) => personKey(p) === personKey(op.remove!)) ? prev : [...prev, op.remove];
-        return prev;
+        if (op.op === 'add') return prev.filter((p) => personKey(p) !== personKey(op.value));
+        return prev.some((p) => personKey(p) === personKey(op.value)) ? prev : [...prev, op.value];
       });
       toast.error(err.message);
     },
@@ -489,7 +518,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
     if (selected.some((p) => personKey(p) === personKey(person))) return;
     setSelected((prev) => [...prev, person]);
     pendingSavesRef.current += 1;
-    save.mutate({ add: person });
+    save.mutate({ op: 'add', value: person });
     setQuery('');
     setHighlight(0);
     if (focusInput) inputRef.current?.focus();
@@ -498,7 +527,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   function remove(person: Person) {
     setSelected((prev) => prev.filter((p) => personKey(p) !== personKey(person)));
     pendingSavesRef.current += 1;
-    save.mutate({ remove: person });
+    save.mutate({ op: 'remove', value: person });
   }
 
   /**
@@ -535,10 +564,11 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
       }
       return out;
     });
-    // Server-side: remove the free-text entry and add the user.
-    // The PATCH route applies them under the lock.
-    pendingSavesRef.current += 1;
-    save.mutate({ remove: freePerson, add: userPerson } as { add?: Person; remove?: Person });
+    // Server-side: two sequential ops through the dedicated items
+    // route. Each runs under the per-file lock so they serialise.
+    pendingSavesRef.current += 2;
+    save.mutate({ op: 'remove', value: freePerson });
+    save.mutate({ op: 'add', value: userPerson });
   }
 
   // Build the suggestion list — merges three sources:
