@@ -4,6 +4,7 @@ import { db, SettingsRepository } from '@harbor/database';
 import { guessMimeType } from '@harbor/utils';
 import { LocalFilesystemProvider, DropboxProvider, ArchiveMetadataService } from '@harbor/providers';
 import { fileUpdatePayloadFromJson, syncTagsForFile, metaRootForArchive, PreviewJob } from '@harbor/jobs';
+import { withFileWriteLock } from '@harbor/utils';
 import { getSecret } from '@/lib/secrets';
 import type { StorageProvider } from '@harbor/types';
 
@@ -120,31 +121,41 @@ export async function POST(
       try { hash = await provider.computeHash(providerPath); } catch { /* non-fatal */ }
     }
 
-    // Re-read the Harbor metadata JSON
+    // Re-read the Harbor metadata JSON BY UUID (not by path) so the
+    // baseline matches the same sidecar that any concurrent PATCH
+    // would write to. Held under the per-file write lock so a user
+    // edit racing with reindex can't be clobbered.
     const itemMetaRoot = metaRootForArchive(root.id, root.rootPath, provider.type);
-    const itemPayload = await archiveMeta.readItemByUuid(itemMetaRoot, file.harborItemId);
-    console.log(`[ReindexFile] Metadata JSON: ${itemPayload ? 'found' : 'not found'}`);
+    await withFileWriteLock(id, async () => {
+      const itemPayload = await archiveMeta.readItemByUuid(itemMetaRoot, file.harborItemId);
+      console.log(`[ReindexFile] Metadata JSON: ${itemPayload ? 'found' : 'not found'}`);
 
-    // Update the DB row
-    await db.file.update({
-      where: { id },
-      data: {
-        mimeType,
-        size: metadata.size,
-        hash,
-        fileCreatedAt: metadata.createdAt,
-        fileModifiedAt: metadata.modifiedAt,
-        status: 'INDEXED',
-        indexedAt: new Date(),
-        ...(itemPayload ? fileUpdatePayloadFromJson(itemPayload) : {}),
-      },
+      // fileUpdatePayloadFromJson now omits `meta` when the sidecar
+      // is empty, so an empty-sidecar reindex no longer wipes user
+      // metadata that's only persisted in the DB column.
+      await db.file.update({
+        where: { id },
+        data: {
+          mimeType,
+          size: metadata.size,
+          hash,
+          fileCreatedAt: metadata.createdAt,
+          fileModifiedAt: metadata.modifiedAt,
+          status: 'INDEXED',
+          indexedAt: new Date(),
+          ...(itemPayload ? fileUpdatePayloadFromJson(itemPayload) : {}),
+        },
+      });
+      console.log(`[ReindexFile] DB row updated`);
+
+      // syncTagsForFile only deletes when fields.tags is explicitly
+      // an empty array — a missing tags key (the empty-sidecar
+      // case) is now a no-op, so reindex won't wipe a user's tag
+      // join-table entries.
+      if (itemPayload) {
+        await syncTagsForFile(id, itemPayload);
+      }
     });
-    console.log(`[ReindexFile] DB row updated`);
-
-    // Sync tags
-    if (itemPayload) {
-      await syncTagsForFile(id, itemPayload);
-    }
 
     // Regenerate previews
     if (mimeType && (mimeType.startsWith('image/') || mimeType.startsWith('video/'))) {

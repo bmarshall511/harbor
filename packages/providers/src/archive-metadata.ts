@@ -248,6 +248,17 @@ export class ArchiveMetadataService {
    *
    * `core` and `fields` are merged shallowly — pass an explicit
    * `null`/`undefined` value to clear a key.
+   *
+   * **UUID resolution**: when the caller passes `forceUuid` in
+   * `updates`, we use it verbatim and skip the path-based index
+   * lookup. This is critical for callers (the file PATCH route)
+   * that already know the canonical sidecar UUID from the DB row,
+   * because the path-based lookup can drift if `index.json` and
+   * the DB get out of sync (legacy files, missed reindexes,
+   * orphaned index entries). When `forceUuid` is supplied we ALSO
+   * heal the index so future path-based lookups find the same
+   * UUID — that way the next caller can use either path or UUID
+   * and they'll agree.
    */
   async updateItem(
     archiveRootPath: string,
@@ -262,9 +273,34 @@ export class ArchiveMetadataService {
        * Untouched keys are preserved.
        */
       systemOverride?: { createdAtOverride?: string | null };
+      /**
+       * Override the path-based UUID lookup. When set, the sidecar
+       * is read AND written at this UUID, and the index is healed
+       * so the path resolves to the same UUID for future reads.
+       */
+      forceUuid?: string;
     },
   ): Promise<{ uuid: string; item: HarborItemJson }> {
-    const uuid = await this.getOrCreateItemId(archiveRootPath, relPath);
+    let uuid: string;
+    if (updates.forceUuid) {
+      uuid = updates.forceUuid;
+      // Reconcile index.json so subsequent path-based reads resolve
+      // to the same sidecar. Without this, a future caller using
+      // `readItem(relPath)` would get null while we keep writing
+      // (and reading) the right file by UUID.
+      const index = await this.readIndex(archiveRootPath);
+      if (index.paths[relPath] !== uuid) {
+        // Strip any other path entries that pointed at this UUID
+        // (e.g. the file was renamed and the old entry is stale).
+        for (const [p, u] of Object.entries(index.paths)) {
+          if (u === uuid && p !== relPath) delete index.paths[p];
+        }
+        index.paths[relPath] = uuid;
+        await this.writeIndex(archiveRootPath, index);
+      }
+    } else {
+      uuid = await this.getOrCreateItemId(archiveRootPath, relPath);
+    }
     const existing = await this.readItemByUuid(archiveRootPath, uuid);
 
     const now = new Date().toISOString();
@@ -375,15 +411,22 @@ export class ArchiveMetadataService {
 }
 
 /**
- * Strip `null`, `undefined`, empty strings, and empty arrays from an
- * object before persisting. The JSON file should never have noise.
+ * Strip `null`, `undefined`, and empty strings from an object before
+ * persisting. The JSON file should never have noise like
+ * `{title: null, description: ''}`.
+ *
+ * Empty arrays are PRESERVED. A `[]` value is a meaningful user
+ * intent ("I cleared every tag", "no people"), distinct from "the
+ * caller didn't touch this field". Stripping empty arrays would
+ * collapse those two cases and make it impossible for downstream
+ * code (e.g. `syncTagsForFile`) to tell whether it should clear the
+ * relational mirror or leave it alone.
  */
 function pruneEmpty<T extends Record<string, unknown>>(obj: T): T {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     if (value === null || value === undefined) continue;
     if (typeof value === 'string' && value.length === 0) continue;
-    if (Array.isArray(value) && value.length === 0) continue;
     out[key] = value;
   }
   return out as T;

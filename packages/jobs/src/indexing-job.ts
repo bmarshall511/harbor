@@ -407,17 +407,26 @@ export class IndexingJob {
             let itemId: string;
             let existingItem: import('@harbor/providers').HarborItemJson | null = null;
 
+            // Always look up the DB row's harborItemId first. If a row
+            // exists, REUSE it — that's the canonical UUID and any
+            // sidecar the user has previously edited lives at that
+            // path. Falling back to `getOrCreateItemId` would create a
+            // brand-new UUID whenever `index.json` is missing or
+            // drifted, orphaning the old sidecar and wiping the user's
+            // metadata on the next mirror.
+            const existingDbRow = await db.file.findUnique({
+              where: { archiveRootId_path: { archiveRootId, path: normalizedPath } },
+              select: { harborItemId: true },
+            });
+
             if (!isCloudEnv) {
               const itemMetaRoot = metaRootForArchive(archiveRootId, archiveRootPath, provider.type);
-              itemId = await this.archiveMeta.getOrCreateItemId(itemMetaRoot, normalizedPath);
+              itemId =
+                existingDbRow?.harborItemId ??
+                (await this.archiveMeta.getOrCreateItemId(itemMetaRoot, normalizedPath));
               existingItem = await this.archiveMeta.readItemByUuid(itemMetaRoot, itemId);
             } else {
-              // Use existing harborItemId from DB if available, else generate one
-              const existing = await db.file.findUnique({
-                where: { archiveRootId_path: { archiveRootId, path: normalizedPath } },
-                select: { harborItemId: true },
-              });
-              itemId = existing?.harborItemId ?? crypto.randomUUID();
+              itemId = existingDbRow?.harborItemId ?? crypto.randomUUID();
             }
 
             const baseFile = {
@@ -549,10 +558,19 @@ export class IndexingJob {
               }
             }
 
-            // Resolve (or allocate) the stable Harbor item ID.
-            // On Vercel, metadata JSON goes to /tmp (writable, ephemeral).
+            // Resolve the stable Harbor item ID. If a DB row already
+            // exists for this path, REUSE its harborItemId so we keep
+            // pointing at the same sidecar — otherwise a wiped or
+            // drifted index entry would orphan the user's
+            // previously-edited metadata.
             const itemMetaRoot = metaRootForArchive(archiveRootId, archiveRootPath, provider.type);
-            const itemId = await this.archiveMeta.getOrCreateItemId(itemMetaRoot, normalizedPath);
+            const existingDbRow = await db.file.findUnique({
+              where: { archiveRootId_path: { archiveRootId, path: normalizedPath } },
+              select: { harborItemId: true },
+            });
+            const itemId =
+              existingDbRow?.harborItemId ??
+              (await this.archiveMeta.getOrCreateItemId(itemMetaRoot, normalizedPath));
 
             // Read whatever metadata already exists so we mirror it
             // into the DB row in the same upsert.

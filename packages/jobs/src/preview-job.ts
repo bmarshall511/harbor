@@ -179,7 +179,7 @@ export class PreviewJob {
                 metaRoot,
                 file.path,
                 { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-                { fields },
+                { fields, forceUuid: file.harborItemId },
               );
               await this.fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
             });
@@ -375,7 +375,7 @@ export class PreviewJob {
           metaRoot,
           file.path,
           { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-          { fields },
+          { fields, forceUuid: file.harborItemId },
         );
         await this.fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
       });

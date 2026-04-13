@@ -170,7 +170,7 @@ export async function POST(request: Request) {
             metaRoot,
             file.path,
             { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-            { fields: { tags: merged } },
+            { fields: { tags: merged }, forceUuid: file.harborItemId },
           );
           await fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
           await syncTagsForFile(fileId, item);
@@ -213,7 +213,10 @@ export async function POST(request: Request) {
         // The read-merge-write cycle runs inside the per-file lock
         // so a concurrent edit can't clobber the merge result.
         await withFileWriteLock(fileId, async () => {
-          const existing = await archiveMeta.readItem(metaRoot, file.path);
+          // Read by UUID so the merge baseline matches what we'll
+          // write back (path-based reads can drift if index.json
+          // and the DB row's harborItemId disagree).
+          const existing = await archiveMeta.readItemByUuid(metaRoot, file.harborItemId);
           const current = (existing?.fields?.[fieldKey] as Array<{ kind: 'user' | 'free'; id?: string; name: string }> | undefined) ?? [];
 
           const seen = new Set(current.map(dedupeKey));
@@ -229,7 +232,7 @@ export async function POST(request: Request) {
             metaRoot,
             file.path,
             { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-            { fields: { [fieldKey]: merged } },
+            { fields: { [fieldKey]: merged }, forceUuid: file.harborItemId },
           );
           await fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
         });
@@ -265,7 +268,7 @@ export async function POST(request: Request) {
             metaRoot,
             file.path,
             { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-            { fields: { [fieldKey]: values.length > 0 ? values : null } },
+            { fields: { [fieldKey]: values.length > 0 ? values : null }, forceUuid: file.harborItemId },
           );
           await fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
         });

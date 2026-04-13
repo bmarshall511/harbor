@@ -161,6 +161,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             systemOverride: {
               createdAtOverride: parsedCreatedAt === null ? null : parsedCreatedAt.toISOString(),
             },
+            forceUuid: file.harborItemId,
           },
         );
 

@@ -165,7 +165,7 @@ export async function mergeFreeTextIntoUser(user: {
         metaRoot,
         file.path,
         { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-        { fields: updatedFields },
+        { fields: updatedFields, forceUuid: file.harborItemId },
       );
       await db.file.update({
         where: { id: file.id },

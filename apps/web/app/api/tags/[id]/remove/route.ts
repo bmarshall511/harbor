@@ -52,7 +52,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
               metaRoot,
               file.path,
               { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-              { fields: { tags: remainingTags } },
+              { fields: { tags: remainingTags }, forceUuid: file.harborItemId },
             );
             await fileRepo.update(entityId, fileUpdatePayloadFromJson(item));
             await syncTagsForFile(entityId, item);

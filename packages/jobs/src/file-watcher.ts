@@ -288,10 +288,15 @@ export class FileWatcherService {
     // Check if file already existed (update vs create)
     const existingFile = await this.fileRepo.findByPath(handle.archiveRootId, relativePath);
 
-    // Resolve the stable Harbor item UUID and read any existing
-    // metadata from the on-disk JSON. If no JSON exists yet, the
-    // file row gets a fresh UUID and an empty `meta` mirror.
-    const itemId = await this.archiveMeta.getOrCreateItemId(handle.rootPath, relativePath);
+    // Resolve the stable Harbor item UUID. If a DB row already
+    // exists for this path, REUSE its harborItemId so we keep
+    // pointing at the same sidecar — otherwise a wiped index entry
+    // would orphan the user's previously-saved metadata. For brand
+    // new files, fall back to the path-based lookup which creates
+    // a fresh UUID.
+    const itemId =
+      existingFile?.harborItemId ??
+      (await this.archiveMeta.getOrCreateItemId(handle.rootPath, relativePath));
     const itemPayload = await this.archiveMeta.readItemByUuid(handle.rootPath, itemId);
 
     const file = await this.fileRepo.upsertByPath(handle.archiveRootId, relativePath, {
@@ -307,10 +312,15 @@ export class FileWatcherService {
       indexedAt: new Date(),
       harborItemId: itemId,
       ...(parentFolderId ? { folder: { connect: { id: parentFolderId } } } : {}),
+      // fileUpdatePayloadFromJson now omits `meta` entirely when
+      // the sidecar has empty core/fields, so reading an empty or
+      // brand-new sidecar can't wipe the DB's existing metadata.
       ...(itemPayload ? fileUpdatePayloadFromJson(itemPayload) : {}),
     });
 
-    // Sync the tag join table from JSON.
+    // Sync the tag join table from JSON. syncTagsForFile is now
+    // a no-op when fields.tags is missing (the empty-sidecar case),
+    // so this won't wipe a user's tags on routine watcher events.
     if (itemPayload) {
       await syncTagsForFile(file.id, itemPayload);
     } else {

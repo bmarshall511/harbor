@@ -291,7 +291,7 @@ async function generatePreviewFromCache(fileId: string, file: any, cachePath: st
                 metaRoot,
                 file.path,
                 { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-                { fields },
+                { fields, forceUuid: file.harborItemId },
               );
               await db.file.update({ where: { id: fileId }, data: fileUpdatePayloadFromJson(item) });
             });

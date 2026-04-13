@@ -13,9 +13,33 @@ import type { HarborItemJson } from '@harbor/providers';
  * which columns mirror the JSON, and a future schema column change
  * touches one file. Tags are handled separately because they live
  * in their own join table — see `syncTagsForFile`.
+ *
+ * **Critical safety**: the returned `meta` key REPLACES the entire
+ * JSONB column when Prisma applies the update — there is no merge
+ * semantic on Postgres JSONB. So if `item.core` and `item.fields`
+ * are both empty (as they are when an indexer/file-watcher creates
+ * a brand-new sidecar, or when a sidecar was just read fresh after
+ * the user's edits never made it onto disk), writing this payload
+ * would silently wipe every tag, person, and custom field the user
+ * had previously added via the PATCH route. Callers in those code
+ * paths read the sidecar AS the source of truth, so an empty
+ * sidecar would override DB metadata that's actually correct.
+ *
+ * To prevent that catastrophic data loss, we omit `meta` from the
+ * payload when both `core` and `fields` are empty. The PATCH route,
+ * which writes the sidecar AND the DB in the same lock-held step,
+ * always has non-empty fields by construction (the user's edit is
+ * already merged in by that point), so it still rewrites `meta`
+ * correctly.
+ *
+ * The same applies to `title`, `description`, and `rating` — they
+ * default to `null` only if the sidecar HAS a `core` object. If
+ * the sidecar's core is missing entirely, we don't touch those
+ * columns either.
  */
 export function fileUpdatePayloadFromJson(item: HarborItemJson) {
   const core = item.core ?? {};
+  const fields = item.fields ?? {};
   const override = item.system?.createdAtOverride;
   // When the user has set a date override, it takes precedence over
   // whatever the indexer just stat'd off disk. Callers spread this
@@ -26,6 +50,17 @@ export function fileUpdatePayloadFromJson(item: HarborItemJson) {
     typeof override === 'string' && override.length > 0
       ? { fileCreatedAt: new Date(override) }
       : {};
+
+  const hasCore = Object.keys(core).length > 0;
+  const hasFields = Object.keys(fields).length > 0;
+
+  // Empty sidecar → don't touch the meta-bearing DB columns. Leaves
+  // the existing DB values alone so an empty-sidecar read can't wipe
+  // user data.
+  if (!hasCore && !hasFields) {
+    return overridePayload;
+  }
+
   return {
     title: core.title ?? null,
     description: core.description ?? null,
@@ -58,17 +93,27 @@ function stripSystemFromJson(item: HarborItemJson) {
  * Tags listed under `fields.tags` (string array) are the source of
  * truth — anything previously attached but not in the JSON is removed.
  *
- * When `fields.tags` is missing or not an array, the file is treated
- * as having no tags: ALL FileTag rows for the file are removed. This
- * is critical because `pruneEmpty` in the archive-metadata service
- * strips empty arrays from the JSON, so "I cleared every tag" arrives
- * here as `undefined`, not `[]` — previously we treated that as a
- * no-op and the relational table went permanently out of sync.
+ * **Important distinction**:
+ *
+ *   • `fields.tags` is `[]`        → user explicitly cleared every
+ *                                     tag; remove all FileTag rows.
+ *   • `fields.tags` is missing      → caller didn't touch tags this
+ *                                     time (e.g. an indexer reading
+ *                                     a sidecar that has no tag
+ *                                     data); LEAVE the FileTag rows
+ *                                     alone. Returning early here is
+ *                                     what stops the file watcher /
+ *                                     reindexer from wiping a user's
+ *                                     tags whenever they happen to
+ *                                     run on a file whose sidecar
+ *                                     has empty fields.
  */
 export async function syncTagsForFile(fileId: string, item: HarborItemJson): Promise<void> {
   const raw = item.fields?.tags;
-  if (!Array.isArray(raw)) {
-    // User cleared all tags. Delete every FileTag row for this file.
+  if (raw === undefined) return;
+  if (!Array.isArray(raw)) return;
+  if (raw.length === 0) {
+    // User explicitly cleared all tags.
     await db.fileTag.deleteMany({ where: { fileId } });
     return;
   }

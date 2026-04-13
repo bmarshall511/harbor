@@ -195,7 +195,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   // the latest server state — never a stale client cache.
   const metaRoot = metaRootForArchive(before.archiveRootId, root.rootPath, providerTypeForRoot(root.providerType));
   const { item, resolvedFields } = await withFileWriteLock(id, async () => {
-    // Read the current sidecar so we can resolve any delta ops.
+    // Read the current sidecar BY UUID so the baseline matches the
+    // exact JSON we'll write back. Reading by path could resolve to
+    // a different sidecar if `index.json` and the DB row's
+    // `harborItemId` ever drift apart (legacy files, missed
+    // reindexes, etc.) — and that drift is what was causing
+    // delta ops on `tags` to apply to an empty baseline, replacing
+    // the file's existing tags with just whatever the user added.
     const existing = await archiveMeta.readItemByUuid(metaRoot, before.harborItemId);
 
     const fields: Record<string, unknown> = {};
@@ -220,7 +226,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         createdAt: before.fileCreatedAt,
         modifiedAt: before.fileModifiedAt,
       },
-      { core, fields },
+      // forceUuid pins the write to the same UUID we just read
+      // from. updateItem also heals the index entry so subsequent
+      // path-based reads agree.
+      { core, fields, forceUuid: before.harborItemId },
     );
 
     // Mirror the derived DB columns from the freshly-written JSON.
