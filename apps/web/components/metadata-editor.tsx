@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
 import { files as filesApi, folders as foldersApi, users as usersApi } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Pencil, Save, X, Star, Users, UserPlus, Check, PawPrint, User, Network } from 'lucide-react';
@@ -52,6 +52,20 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
   const { hasPermission } = useAuth();
   const [editing, setEditing] = useState(false);
   const [formData, setFormData] = useState<Record<string, any>>({});
+
+  // Wait for the first fetch of this file to settle before allowing
+  // edits. react-query will happily return stale cache while a
+  // background refetch runs, and any save fired during that window
+  // would be built on data the user never actually saw — silently
+  // clobbering values they didn't know existed.
+  const isFileFetching = useIsFetching({ queryKey: ['file', file.id] }) > 0;
+  const [hasFreshData, setHasFreshData] = useState(() => !isFileFetching);
+  useEffect(() => {
+    if (!isFileFetching) setHasFreshData(true);
+  }, [isFileFetching]);
+  useEffect(() => {
+    setHasFreshData(false);
+  }, [file.id]);
 
   // Permission helpers for field-level access
   const canView = (key: string) => hasPermission(fieldPermissionResource(key), 'view');
@@ -155,13 +169,18 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
                 // against any other in-flight edit.
                 //
                 // PATCH tags are now full replacement, so we have to
-                // merge the AI suggestions with whatever is already on
-                // the file before sending; otherwise picking tags from
-                // the AI panel would silently wipe out the file's
-                // existing tags.
-                const merged = { ...payload };
+                // merge the AI suggestions with the file's CURRENT
+                // tag list before sending; otherwise picking tags
+                // from the AI panel would wipe out the file's
+                // existing tags. We pull fresh data straight from the
+                // query cache (instead of trusting `file.tags` from
+                // the closure) so the merge baseline is whatever the
+                // server most recently returned, not whatever this
+                // render captured.
+                const merged: typeof payload = { ...payload };
                 if (payload.tags && payload.tags.length > 0) {
-                  const existing = (file.tags ?? []).map((t) => t.name);
+                  const cached = queryClient.getQueryData<FileDto>(['file', file.id]);
+                  const existing = (cached?.tags ?? file.tags ?? []).map((t) => t.name);
                   const seen = new Set(existing.map((n) => n.toLowerCase()));
                   const combined = [...existing];
                   for (const name of payload.tags) {
@@ -178,7 +197,8 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
           )}
           {canEditAny && (editing ? (
             <>
-              <button onClick={handleSave} disabled={mutation.isPending}
+              <button onClick={handleSave} disabled={mutation.isPending || !hasFreshData}
+                title={!hasFreshData ? 'Loading latest…' : undefined}
                 className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
                 <Save className="h-3 w-3" />
                 {mutation.isPending ? 'Saving...' : 'Save'}
@@ -189,8 +209,12 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
               </button>
             </>
           ) : (
-            <button onClick={() => setEditing(true)}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
+            <button
+              onClick={() => setEditing(true)}
+              disabled={!hasFreshData}
+              title={!hasFreshData ? 'Loading latest…' : undefined}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+            >
               <Pencil className="h-3 w-3" /> Edit
             </button>
           ))}
@@ -204,7 +228,7 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
             label="Title"
             value={file.title ?? ''}
             placeholder={canEdit('title') ? 'Add a title...' : undefined}
-            editable={canEdit('title')}
+            editable={canEdit('title') && hasFreshData}
             onSave={(v) => {
               if (v !== (file.title ?? '')) {
                 mutation.mutate({ title: v || null });
@@ -217,7 +241,7 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
             label="Description"
             value={file.description ?? ''}
             placeholder={canEdit('description') ? 'Add a description...' : undefined}
-            editable={canEdit('description')}
+            editable={canEdit('description') && hasFreshData}
             multiline
             onSave={(v) => {
               if (v !== (file.description ?? '')) {
@@ -306,6 +330,25 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
   const queryClient = useQueryClient();
   const invalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // react-query happily returns stale cached data while a background
+  // refetch runs. If we let the user click a chip during that window,
+  // `selected` is built from stale data and the resulting full-replace
+  // PATCH silently clobbers any field values they hadn't seen yet.
+  // We use the global query state to detect "the file is currently
+  // being fetched", and refuse to render the interactive UI until at
+  // least one fetch has completed since this component mounted. After
+  // that first sync the gate stays open — subsequent refetches just
+  // update `selected` through the effect below.
+  const isFileFetching = useIsFetching({ queryKey: ['file', file.id] }) > 0;
+  const [hasFreshData, setHasFreshData] = useState(() => !isFileFetching);
+  useEffect(() => {
+    if (!isFileFetching) setHasFreshData(true);
+  }, [isFileFetching]);
+  useEffect(() => {
+    // New file → reset the gate so we wait for that file's fetch.
+    setHasFreshData(false);
+  }, [file.id]);
+
   const initial = useMemo<string[]>(() => {
     const raw = file.meta?.fields?.[field.key];
     if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === 'string');
@@ -314,14 +357,11 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
   }, [file, field.key]);
 
   const [selected, setSelected] = useState<string[]>(initial);
-  // Track how many saves are currently in flight. We only want to
-  // keep the local state frozen while the user has an unsettled
-  // edit — once everything is saved, the server is the source of
-  // truth and we *must* adopt any fresh data it returns, otherwise
-  // the component will sit on a stale value forever (the bug where
-  // "sometimes saves don't take": they did save, but the local
-  // state was initialised from stale cache on remount and the old
-  // file.id guard then refused to pick up the refetch).
+  // Track how many saves are currently in flight. While there is at
+  // least one unsettled edit we keep the local state frozen so a
+  // background refetch can't stomp the user's pending change. Once
+  // everything has settled the server becomes the source of truth
+  // and we adopt whatever fresh data the refetch returns.
   const pendingSavesRef = useRef(0);
   useEffect(() => {
     if (pendingSavesRef.current === 0) {
@@ -368,11 +408,18 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
         {field.options.map((opt) => {
           const isOn = selected.includes(opt.value);
           return (
-            <button key={opt.value} onClick={() => toggle(opt.value)}
+            <button
+              key={opt.value}
+              onClick={() => toggle(opt.value)}
+              disabled={!hasFreshData}
+              aria-disabled={!hasFreshData}
+              title={!hasFreshData ? 'Loading latest…' : undefined}
               className={cn(
                 'rounded-md px-2 py-0.5 text-[11px] font-medium border transition-colors',
                 isOn ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-primary/30',
-              )}>
+                !hasFreshData && 'opacity-50 cursor-wait',
+              )}
+            >
               {opt.label}
             </button>
           );
@@ -400,17 +447,29 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   const [showWizard, setShowWizard] = useState(false);
   const [wizardInitialName, setWizardInitialName] = useState('');
 
+  // Same fresh-data gate as MultiselectField: we don't allow the
+  // user to add or remove people until at least one fetch of this
+  // file has completed since the component mounted. Otherwise a
+  // click during the cache-stale window would commit a list built
+  // from cached data the user never saw, replacing whoever was
+  // actually on the file with the user's local snapshot.
+  const isFileFetching = useIsFetching({ queryKey: ['file', file.id] }) > 0;
+  const [hasFreshData, setHasFreshData] = useState(() => !isFileFetching);
+  useEffect(() => {
+    if (!isFileFetching) setHasFreshData(true);
+  }, [isFileFetching]);
+  useEffect(() => {
+    setHasFreshData(false);
+  }, [file.id]);
+
   // Current selection persisted on this file
   const initial = useMemo<Person[]>(() => normalizePeople(file.meta?.fields?.[field.key]), [file, field.key]);
   const [selected, setSelected] = useState<Person[]>(initial);
-  // Sync `selected` to whatever the server has ONLY when there are
-  // no saves currently in flight. With the old "reset on file.id
-  // change" guard, a component that mounted with stale cached data
-  // (e.g. after navigating back to a previously-viewed file on the
-  // review page) would stay stuck on that stale value forever —
-  // the refetch arrived but the guard refused to apply it because
-  // the id hadn't changed. The counter lets us always adopt fresh
-  // server data while still protecting mid-edit state.
+  // While there's at least one save in flight, keep the local state
+  // frozen so a background refetch can't stomp the user's pending
+  // change. Once everything has settled we adopt fresh server data
+  // — that's how an out-of-band edit (admin merge, indexer EXIF
+  // pass, etc.) propagates back into the UI.
   const pendingSavesRef = useRef(0);
   useEffect(() => {
     if (pendingSavesRef.current === 0) {
@@ -469,6 +528,11 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   });
 
   function commit(next: Person[]) {
+    // Refuse to send a payload built from cached state we haven't
+    // verified against the server yet — see the gate explanation
+    // above. The button styling (cursor-wait, opacity) tells the
+    // user something's loading.
+    if (!hasFreshData) return;
     setSelected(next);
     pendingSavesRef.current += 1;
     save.mutate(next);
@@ -730,7 +794,8 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
           ref={inputRef}
           type="text"
           value={query}
-          placeholder={selected.length === 0 ? 'Add a person or pet…' : 'Add another…'}
+          placeholder={!hasFreshData ? 'Loading latest…' : selected.length === 0 ? 'Add a person or pet…' : 'Add another…'}
+          disabled={!hasFreshData}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); setHighlight(0); }}
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 120)}
