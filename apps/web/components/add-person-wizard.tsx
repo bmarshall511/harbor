@@ -86,12 +86,14 @@ const REL_TYPE_LABELS: Record<string, string> = {
 
 interface AddPersonWizardProps {
   open: boolean;
-  onClose: () => void;
+  onClose: (createdName?: string) => void;
   /** Pre-select an existing person to add relationships for */
   existingPersonId?: string;
+  /** Pre-fill the name field */
+  initialName?: string;
 }
 
-export function AddPersonWizard({ open, onClose, existingPersonId }: AddPersonWizardProps) {
+export function AddPersonWizard({ open, onClose, existingPersonId, initialName }: AddPersonWizardProps) {
   const queryClient = useQueryClient();
   const [step, setStep] = useState(0);
 
@@ -118,7 +120,7 @@ export function AddPersonWizard({ open, onClose, existingPersonId }: AddPersonWi
   useEffect(() => {
     if (open) {
       setStep(existingPersonId ? 1 : 0);
-      setName('');
+      setName(initialName ?? '');
       setEntityType('PERSON');
       setGender('');
       setUseExisting(existingPersonId ?? null);
@@ -130,7 +132,7 @@ export function AddPersonWizard({ open, onClose, existingPersonId }: AddPersonWi
       setSelectedRels(new Set());
       setSelectedGroups(new Set());
     }
-  }, [open, existingPersonId]);
+  }, [open, existingPersonId, initialName]);
 
   // Fetch all people for pickers
   const { data: allPersons = [] } = useQuery<PersonOption[]>({
@@ -242,7 +244,11 @@ export function AddPersonWizard({ open, onClose, existingPersonId }: AddPersonWi
       toast.success(
         `Created ${data.created} relationship${data.created !== 1 ? 's' : ''}${data.groupsAdded > 0 ? ` and added to ${data.groupsAdded} group${data.groupsAdded !== 1 ? 's' : ''}` : ''}${data.skipped > 0 ? ` (${data.skipped} already existed)` : ''}`,
       );
-      onClose();
+      // Pass the created person's name so the caller can auto-add them
+      const createdName = useExisting
+        ? allPersons.find((p) => p.id === useExisting)?.name ?? name
+        : name;
+      onClose(createdName.trim() || undefined);
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -278,7 +284,7 @@ export function AddPersonWizard({ open, onClose, existingPersonId }: AddPersonWi
   ).length;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => onClose()}>
       <div
         className="w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -291,7 +297,7 @@ export function AddPersonWizard({ open, onClose, existingPersonId }: AddPersonWi
             </div>
             <h2 className="text-sm font-semibold">Add Person</h2>
           </div>
-          <button onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-accent">
+          <button onClick={() => onClose()} className="rounded-md p-1 text-muted-foreground hover:bg-accent">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -368,7 +374,7 @@ export function AddPersonWizard({ open, onClose, existingPersonId }: AddPersonWi
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-border px-5 py-3">
           <button
-            onClick={() => step > 0 ? setStep(step - 1) : onClose()}
+            onClick={() => { if (step > 0) setStep(step - 1); else onClose(); }}
             className="flex items-center gap-1 rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent transition-colors"
           >
             <ChevronLeft className="h-3.5 w-3.5" />

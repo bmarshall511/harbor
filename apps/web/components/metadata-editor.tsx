@@ -373,6 +373,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const [showWizard, setShowWizard] = useState(false);
+  const [wizardInitialName, setWizardInitialName] = useState('');
 
   // Current selection persisted on this file
   const initial = useMemo<Person[]>(() => normalizePeople(file.meta?.fields?.[field.key]), [file, field.key]);
@@ -764,6 +765,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
                 onMouseDown={(e) => {
                   e.preventDefault();
                   setOpen(false);
+                  setWizardInitialName(query.trim());
                   setShowWizard(true);
                 }}
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent/50 border-t border-border/50 mt-1 pt-1.5"
@@ -778,10 +780,19 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
 
       <AddPersonWizard
         open={showWizard}
-        onClose={() => {
+        initialName={wizardInitialName}
+        onClose={(createdName) => {
           setShowWizard(false);
+          setWizardInitialName('');
           setQuery('');
           queryClient.invalidateQueries({ queryKey: ['persons'] });
+          // Auto-add the newly created person to this file
+          if (createdName) {
+            const person: Person = { kind: 'free', name: createdName };
+            if (!selected.some((p) => personKey(p) === personKey(person))) {
+              commit([...selected, person]);
+            }
+          }
           queryClient.invalidateQueries({ queryKey: ['file', file.id] });
         }}
       />
