@@ -857,11 +857,18 @@ function ReviewVideoPlayer({ file, onOpenViewer }: { file: FileDto; onOpenViewer
   }
 
   // Non-streamable: show thumbnail + download progress
-  if (!isStreamable || error) {
+  if (!isStreamable) {
     const downloading = downloadMutation.isPending;
 
     return (
-      <div className="relative max-h-full max-w-full flex items-center justify-center">
+      <div
+        className="relative max-h-full max-w-full flex items-center justify-center cursor-pointer"
+        onClick={() => {
+          if (!downloading && !downloadMutation.isSuccess) {
+            downloadMutation.mutate();
+          }
+        }}
+      >
         {/* Thumbnail background */}
         {file.previews?.length > 0 ? (
           <img
@@ -894,25 +901,36 @@ function ReviewVideoPlayer({ file, onOpenViewer }: { file: FileDto; onOpenViewer
               <p className="text-sm font-medium text-destructive">Download failed</p>
               <p className="mt-1 text-xs text-muted-foreground">{downloadError}</p>
               <button
-                onClick={() => downloadMutation.mutate()}
+                onClick={(e) => { e.stopPropagation(); downloadMutation.mutate(); }}
                 className="mt-3 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
               >
                 Try again
               </button>
             </div>
-          ) : error ? (
-            <div className="w-64 text-center">
-              <FileVideo className="mx-auto h-10 w-10 text-muted-foreground/30" />
-              <p className="mt-2 text-sm text-muted-foreground">Cannot play this video</p>
-              <button
-                onClick={onOpenViewer}
-                className="mt-3 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                Open in viewer
-              </button>
+          ) : (
+            <div className="flex flex-col items-center gap-2">
+              <div className="rounded-full bg-black/50 p-4 backdrop-blur-sm">
+                <Play className="h-8 w-8 text-white fill-white" />
+              </div>
+              <p className="text-xs text-foreground/70">Click to download and play</p>
             </div>
-          ) : null}
+          )}
         </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3">
+        <FileVideo className="h-12 w-12 text-muted-foreground/30" />
+        <p className="text-sm text-muted-foreground">Cannot play this video</p>
+        <button
+          onClick={onOpenViewer}
+          className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          Open in viewer
+        </button>
       </div>
     );
   }
