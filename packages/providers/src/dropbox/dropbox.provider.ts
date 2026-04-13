@@ -294,8 +294,10 @@ export class DropboxProvider implements StorageProvider {
 
   async exists(filePath: string): Promise<boolean> {
     try {
-      const client = this.getClient();
-      await client.filesGetMetadata({ path: this.normalizeDropboxPath(filePath) });
+      await this.withRefresh(async () => {
+        const client = this.getClient();
+        await client.filesGetMetadata({ path: this.normalizeDropboxPath(filePath) });
+      });
       return true;
     } catch {
       return false;
@@ -359,47 +361,63 @@ export class DropboxProvider implements StorageProvider {
   }
 
   async getMetadata(filePath: string): Promise<FileMetadataResult> {
-    const client = this.getClient();
-    const result = await client.filesGetMetadata({ path: this.normalizeDropboxPath(filePath) });
-    const meta = result.result as any;
-    return {
-      size: meta.size ?? 0,
-      mimeType: null,
-      createdAt: null,
-      modifiedAt: meta.client_modified ? new Date(meta.client_modified) : null,
-      hash: meta.content_hash ?? null,
-    };
+    return this.withRefresh(async () => {
+      const client = this.getClient();
+      const result = await client.filesGetMetadata({ path: this.normalizeDropboxPath(filePath) });
+      const meta = result.result as any;
+      return {
+        size: meta.size ?? 0,
+        mimeType: null,
+        createdAt: null,
+        modifiedAt: meta.client_modified ? new Date(meta.client_modified) : null,
+        hash: meta.content_hash ?? null,
+      };
+    });
   }
 
   async writeFile(filePath: string, data: Buffer): Promise<void> {
-    const client = this.getClient();
-    await client.filesUpload({
-      path: this.normalizeDropboxPath(filePath),
-      contents: data,
-      mode: { '.tag': 'overwrite' },
+    await this.withRefresh(async () => {
+      const client = this.getClient();
+      await client.filesUpload({
+        path: this.normalizeDropboxPath(filePath),
+        contents: data,
+        mode: { '.tag': 'overwrite' },
+      });
     });
   }
 
   async createFolder(folderPath: string): Promise<void> {
-    const client = this.getClient();
-    await client.filesCreateFolderV2({ path: this.normalizeDropboxPath(folderPath) });
+    await this.withRefresh(async () => {
+      const client = this.getClient();
+      await client.filesCreateFolderV2({ path: this.normalizeDropboxPath(folderPath) });
+    });
   }
 
   async deleteFile(filePath: string): Promise<void> {
-    const client = this.getClient();
-    await client.filesDeleteV2({ path: this.normalizeDropboxPath(filePath) });
+    await this.withRefresh(async () => {
+      const client = this.getClient();
+      await client.filesDeleteV2({ path: this.normalizeDropboxPath(filePath) });
+    });
   }
 
   async deleteFolder(folderPath: string): Promise<void> {
-    const client = this.getClient();
-    await client.filesDeleteV2({ path: this.normalizeDropboxPath(folderPath) });
+    await this.withRefresh(async () => {
+      const client = this.getClient();
+      await client.filesDeleteV2({ path: this.normalizeDropboxPath(folderPath) });
+    });
   }
 
   async moveFile(from: string, to: string): Promise<void> {
-    const client = this.getClient();
-    await client.filesMoveV2({
-      from_path: this.normalizeDropboxPath(from),
-      to_path: this.normalizeDropboxPath(to),
+    // Wrapped in `withRefresh` so an expired access token is
+    // transparently refreshed instead of surfacing as a 401. The
+    // read paths already do this; rename/move is a mutation so it
+    // needs the same treatment.
+    await this.withRefresh(async () => {
+      const client = this.getClient();
+      await client.filesMoveV2({
+        from_path: this.normalizeDropboxPath(from),
+        to_path: this.normalizeDropboxPath(to),
+      });
     });
   }
 
@@ -411,11 +429,12 @@ export class DropboxProvider implements StorageProvider {
   }
 
   async *search(query: string, dirPath?: string): AsyncGenerator<SearchResult> {
-    const client = this.getClient();
-    const result = await client.filesSearchV2({
-      query,
-      options: dirPath ? { path: this.normalizeDropboxPath(dirPath) } : undefined,
-    });
+    const result = await this.withRefresh(() =>
+      this.getClient().filesSearchV2({
+        query,
+        options: dirPath ? { path: this.normalizeDropboxPath(dirPath) } : undefined,
+      }),
+    );
 
     for (const match of result.result.matches) {
       const meta = (match.metadata as any)?.metadata;
