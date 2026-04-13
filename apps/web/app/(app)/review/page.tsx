@@ -434,7 +434,11 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
   });
   const file = freshFile ?? item.file;
   const category = getMimeCategory(file.mimeType);
-  const hasPreview = category === 'image' || file.previews?.length > 0;
+  // Check extension for image types not yet reindexed (mime still null)
+  const RAW_IMAGE_EXTS = new Set(['.nef', '.cr2', '.cr3', '.arw', '.dng', '.orf', '.rw2', '.raf', '.pef', '.srw']);
+  const ext = file.name ? ('.' + file.name.split('.').pop()?.toLowerCase()) : '';
+  const isImageByExt = RAW_IMAGE_EXTS.has(ext);
+  const hasPreview = category === 'image' || isImageByExt || file.previews?.length > 0;
   const isVideo = category === 'video';
 
   // Compute reasons from fresh file data so they update reactively
