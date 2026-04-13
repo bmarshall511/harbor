@@ -81,12 +81,24 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     coverFileId: body.coverFileId,
   });
 
-  // Handle tag additions
-  if (body.tags && Array.isArray(body.tags)) {
-    for (const tagName of body.tags) {
-      const tag = await tagRepo.findOrCreate(tagName);
-      await tagRepo.addToFolder(id, tag.id);
+  // Handle tag additions. Accepts both the legacy plain-array shape
+  // (`{tags: ['a', 'b']}`) and the delta shape (`{tags: {add: 'a'}}`
+  // or `{tags: {add: ['a', 'b']}}`) so the folder TagEditor can use
+  // the same call site as the file editor.
+  const tagsToAdd: string[] = [];
+  if (Array.isArray(body.tags)) {
+    tagsToAdd.push(...body.tags.filter((t: unknown): t is string => typeof t === 'string'));
+  } else if (body.tags && typeof body.tags === 'object' && 'add' in body.tags) {
+    const add = (body.tags as { add: unknown }).add;
+    if (Array.isArray(add)) {
+      tagsToAdd.push(...add.filter((t: unknown): t is string => typeof t === 'string'));
+    } else if (typeof add === 'string') {
+      tagsToAdd.push(add);
     }
+  }
+  for (const tagName of tagsToAdd) {
+    const tag = await tagRepo.findOrCreate(tagName);
+    await tagRepo.addToFolder(id, tag.id);
   }
 
   await audit(auth, 'update', 'FOLDER', id, { description: before.description, location: before.location, eventDate: before.eventDate }, { description: body.description, location: body.location, eventDate: body.eventDate });

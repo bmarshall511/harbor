@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useMutation, useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { files as filesApi, folders as foldersApi, users as usersApi } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Pencil, Save, X, Star, Users, UserPlus, Check, PawPrint, User, Network } from 'lucide-react';
@@ -52,20 +52,10 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
   const { hasPermission } = useAuth();
   const [editing, setEditing] = useState(false);
   const [formData, setFormData] = useState<Record<string, any>>({});
-
-  // Wait for the first fetch of this file to settle before allowing
-  // edits. react-query will happily return stale cache while a
-  // background refetch runs, and any save fired during that window
-  // would be built on data the user never actually saw — silently
-  // clobbering values they didn't know existed.
-  const isFileFetching = useIsFetching({ queryKey: ['file', file.id] }) > 0;
-  const [hasFreshData, setHasFreshData] = useState(() => !isFileFetching);
-  useEffect(() => {
-    if (!isFileFetching) setHasFreshData(true);
-  }, [isFileFetching]);
-  useEffect(() => {
-    setHasFreshData(false);
-  }, [file.id]);
+  // Track which keys the user has touched in editing mode so the
+  // explicit Save button only sends fields they actually changed —
+  // never blanket-submitting all five with potentially stale values.
+  const dirtyKeysRef = useRef<Set<string>>(new Set());
 
   // Permission helpers for field-level access
   const canView = (key: string) => hasPermission(fieldPermissionResource(key), 'view');
@@ -80,10 +70,12 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
     queryFn: async () => { const r = await fetch('/api/metadata-fields'); return r.json(); },
   });
 
-  // Initialize form data from file. Only reset when navigating to a
-  // different file (ID change), NOT on every refetch — otherwise
-  // in-flight edits (e.g. AI suggestions applied but not yet saved)
-  // get wiped by a background query invalidation.
+  // Initialize form data from file. Reset whenever the user is not
+  // in edit mode OR navigates to a different file. Inside edit mode
+  // we keep formData stable so the user's typing isn't wiped by a
+  // background refetch — but we drop their dirty-key tracking when
+  // they exit editing so a future Save doesn't accidentally re-send
+  // a key they previously touched.
   const prevFileIdRef = useRef(file.id);
   useEffect(() => {
     if (prevFileIdRef.current !== file.id || !editing) {
@@ -95,12 +87,14 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
         altText: (fields.altText as string | undefined) ?? '',
         rating: file.rating ?? 0,
       });
+      dirtyKeysRef.current = new Set();
       prevFileIdRef.current = file.id;
     }
   }, [file.id, file.title, file.description, file.rating, file.meta, editing]);
 
   const setField = (key: string, value: any) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
+    dirtyKeysRef.current.add(key);
   };
 
   const mutation = useMutation({
@@ -120,16 +114,19 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
   });
 
   const handleSave = () => {
-    // The PATCH route partitions known core keys (title, description,
-    // rating) into `core` and everything else (caption, altText, ...)
-    // into `fields` automatically.
-    mutation.mutate({
-      title: formData.title || null,
-      description: formData.description || null,
-      caption: formData.caption || null,
-      altText: formData.altText || null,
-      rating: formData.rating || null,
-    });
+    // Only send fields the user actually touched. The previous
+    // version blanket-sent all five fields every time, which meant
+    // any stale formData entry (e.g. caption read from the cache
+    // before a refetch) would silently clobber the server value.
+    const payload: Record<string, unknown> = {};
+    for (const key of dirtyKeysRef.current) {
+      payload[key] = formData[key] || null;
+    }
+    if (Object.keys(payload).length === 0) {
+      setEditing(false);
+      return;
+    }
+    mutation.mutate(payload);
   };
 
   // Filter fields applicable to this file type
@@ -163,42 +160,27 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
             <AiSuggestButton
               fileId={file.id}
               onApply={async (payload) => {
-                // Single PATCH containing every picked field — title,
-                // description, and tags all land in one sidecar write,
-                // so the server-side lock serialises them atomically
-                // against any other in-flight edit.
-                //
-                // PATCH tags are now full replacement, so we have to
-                // merge the AI suggestions with the file's CURRENT
-                // tag list before sending; otherwise picking tags
-                // from the AI panel would wipe out the file's
-                // existing tags. We pull fresh data straight from the
-                // query cache (instead of trusting `file.tags` from
-                // the closure) so the merge baseline is whatever the
-                // server most recently returned, not whatever this
-                // render captured.
-                const merged: typeof payload = { ...payload };
+                // Single PATCH so all the picked content lands in one
+                // sidecar write under the server's per-file lock. We
+                // ship the AI tags as an `add` delta — the server
+                // applies them against the live tag list, so the
+                // file's existing tags are preserved no matter what
+                // the client cache happens to hold right now.
+                const body: Record<string, unknown> = {};
+                if (payload.title) body.title = payload.title;
+                if (payload.description) body.description = payload.description;
                 if (payload.tags && payload.tags.length > 0) {
-                  const cached = queryClient.getQueryData<FileDto>(['file', file.id]);
-                  const existing = (cached?.tags ?? file.tags ?? []).map((t) => t.name);
-                  const seen = new Set(existing.map((n) => n.toLowerCase()));
-                  const combined = [...existing];
-                  for (const name of payload.tags) {
-                    const key = name.trim().toLowerCase();
-                    if (!key || seen.has(key)) continue;
-                    seen.add(key);
-                    combined.push(name);
-                  }
-                  merged.tags = combined;
+                  body.tags = { add: payload.tags };
                 }
-                await mutation.mutateAsync(merged);
+                if (Object.keys(body).length > 0) {
+                  await mutation.mutateAsync(body);
+                }
               }}
             />
           )}
           {canEditAny && (editing ? (
             <>
-              <button onClick={handleSave} disabled={mutation.isPending || !hasFreshData}
-                title={!hasFreshData ? 'Loading latest…' : undefined}
+              <button onClick={handleSave} disabled={mutation.isPending}
                 className="flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
                 <Save className="h-3 w-3" />
                 {mutation.isPending ? 'Saving...' : 'Save'}
@@ -211,9 +193,7 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
           ) : (
             <button
               onClick={() => setEditing(true)}
-              disabled={!hasFreshData}
-              title={!hasFreshData ? 'Loading latest…' : undefined}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
             >
               <Pencil className="h-3 w-3" /> Edit
             </button>
@@ -228,7 +208,7 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
             label="Title"
             value={file.title ?? ''}
             placeholder={canEdit('title') ? 'Add a title...' : undefined}
-            editable={canEdit('title') && hasFreshData}
+            editable={canEdit('title')}
             onSave={(v) => {
               if (v !== (file.title ?? '')) {
                 mutation.mutate({ title: v || null });
@@ -241,7 +221,7 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
             label="Description"
             value={file.description ?? ''}
             placeholder={canEdit('description') ? 'Add a description...' : undefined}
-            editable={canEdit('description') && hasFreshData}
+            editable={canEdit('description')}
             multiline
             onSave={(v) => {
               if (v !== (file.description ?? '')) {
@@ -319,36 +299,26 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
   );
 }
 
-// ─── Multiselect Field (inline save) ──────────────────────────
+// ─── Multiselect Field (inline save, delta-based) ─────────────
 //
-// Reads the current value from `file.meta.fields[field.key]` so
-// toggling a chip persists *and* survives reloads. The PATCH route
-// writes the JSON file (canonical) and mirrors it back into the DB
-// row's `meta` column for fast read-back.
+// Sends `{ [field.key]: { add: 'X' } }` or `{ ...: { remove: 'X' } }`
+// to the PATCH route. The server resolves the delta against the
+// LATEST sidecar value under its per-file write lock, so the merge
+// baseline is always the live server state — never whatever the
+// client happened to have cached. This means we never need to know
+// the "real" current array on the client, which is what made the
+// old full-replacement model fragile (a stale-cache click would
+// silently clobber any values the user hadn't seen yet).
 
 function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   const queryClient = useQueryClient();
   const invalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // react-query happily returns stale cached data while a background
-  // refetch runs. If we let the user click a chip during that window,
-  // `selected` is built from stale data and the resulting full-replace
-  // PATCH silently clobbers any field values they hadn't seen yet.
-  // We use the global query state to detect "the file is currently
-  // being fetched", and refuse to render the interactive UI until at
-  // least one fetch has completed since this component mounted. After
-  // that first sync the gate stays open — subsequent refetches just
-  // update `selected` through the effect below.
-  const isFileFetching = useIsFetching({ queryKey: ['file', file.id] }) > 0;
-  const [hasFreshData, setHasFreshData] = useState(() => !isFileFetching);
-  useEffect(() => {
-    if (!isFileFetching) setHasFreshData(true);
-  }, [isFileFetching]);
-  useEffect(() => {
-    // New file → reset the gate so we wait for that file's fetch.
-    setHasFreshData(false);
-  }, [file.id]);
-
+  // Local UI state mirrors what we believe the server will look like
+  // *after* every queued op settles. We flip the chip optimistically
+  // when the user clicks and roll back on error — but we never send
+  // this state to the server. The server reconciles from its own
+  // truth.
   const initial = useMemo<string[]>(() => {
     const raw = file.meta?.fields?.[field.key];
     if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === 'string');
@@ -357,11 +327,9 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
   }, [file, field.key]);
 
   const [selected, setSelected] = useState<string[]>(initial);
-  // Track how many saves are currently in flight. While there is at
-  // least one unsettled edit we keep the local state frozen so a
-  // background refetch can't stomp the user's pending change. Once
-  // everything has settled the server becomes the source of truth
-  // and we adopt whatever fresh data the refetch returns.
+  // Adopt fresh server data whenever no local edit is mid-flight.
+  // The check uses a ref counter so rapid clicks don't interrupt
+  // each other.
   const pendingSavesRef = useRef(0);
   useEffect(() => {
     if (pendingSavesRef.current === 0) {
@@ -370,11 +338,9 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
   }, [initial]);
 
   const saveMutation = useMutation({
-    mutationFn: (values: string[]) => filesApi.update(file.id, { [field.key]: values }),
+    mutationFn: (op: { add?: string; remove?: string }) =>
+      filesApi.update(file.id, { [field.key]: op }),
     onSuccess: () => {
-      // Debounce the invalidation so rapid toggles don't cause
-      // competing refetches. Also refresh list queries so cards
-      // show the updated title/tags/people immediately.
       if (invalidateTimerRef.current) clearTimeout(invalidateTimerRef.current);
       invalidateTimerRef.current = setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ['file', file.id] });
@@ -384,21 +350,26 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
         queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       }, 1500);
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error, op) => {
+      // Roll back the optimistic flip so the UI reflects what's
+      // actually on the server.
+      setSelected((prev) => {
+        if (op.add) return prev.filter((v) => v !== op.add);
+        if (op.remove) return prev.includes(op.remove) ? prev : [...prev, op.remove];
+        return prev;
+      });
+      toast.error(err.message);
+    },
     onSettled: () => {
-      // Every mutate() bumps the counter by one; each settle
-      // bumps it back down. The ref is the right tool here — we
-      // don't want a counter state change to trigger a re-render
-      // on every click.
       pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
     },
   });
 
   const toggle = (value: string) => {
-    const next = selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value];
-    setSelected(next);
+    const isOn = selected.includes(value);
+    setSelected((prev) => (isOn ? prev.filter((v) => v !== value) : [...prev, value]));
     pendingSavesRef.current += 1;
-    saveMutation.mutate(next);
+    saveMutation.mutate(isOn ? { remove: value } : { add: value });
   };
 
   return (
@@ -411,13 +382,9 @@ function MultiselectField({ field, file }: { field: FieldTemplate; file: FileDto
             <button
               key={opt.value}
               onClick={() => toggle(opt.value)}
-              disabled={!hasFreshData}
-              aria-disabled={!hasFreshData}
-              title={!hasFreshData ? 'Loading latest…' : undefined}
               className={cn(
                 'rounded-md px-2 py-0.5 text-[11px] font-medium border transition-colors',
                 isOn ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-primary/30',
-                !hasFreshData && 'opacity-50 cursor-wait',
               )}
             >
               {opt.label}
@@ -447,29 +414,12 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   const [showWizard, setShowWizard] = useState(false);
   const [wizardInitialName, setWizardInitialName] = useState('');
 
-  // Same fresh-data gate as MultiselectField: we don't allow the
-  // user to add or remove people until at least one fetch of this
-  // file has completed since the component mounted. Otherwise a
-  // click during the cache-stale window would commit a list built
-  // from cached data the user never saw, replacing whoever was
-  // actually on the file with the user's local snapshot.
-  const isFileFetching = useIsFetching({ queryKey: ['file', file.id] }) > 0;
-  const [hasFreshData, setHasFreshData] = useState(() => !isFileFetching);
-  useEffect(() => {
-    if (!isFileFetching) setHasFreshData(true);
-  }, [isFileFetching]);
-  useEffect(() => {
-    setHasFreshData(false);
-  }, [file.id]);
-
-  // Current selection persisted on this file
+  // Current selection persisted on this file. Like MultiselectField,
+  // we use delta ops so we never need to ship a full list — the
+  // server merges against its own truth under the per-file lock.
   const initial = useMemo<Person[]>(() => normalizePeople(file.meta?.fields?.[field.key]), [file, field.key]);
   const [selected, setSelected] = useState<Person[]>(initial);
-  // While there's at least one save in flight, keep the local state
-  // frozen so a background refetch can't stomp the user's pending
-  // change. Once everything has settled we adopt fresh server data
-  // — that's how an out-of-band edit (admin merge, indexer EXIF
-  // pass, etc.) propagates back into the UI.
+  // Adopt fresh server data whenever no local edit is mid-flight.
   const pendingSavesRef = useRef(0);
   useEffect(() => {
     if (pendingSavesRef.current === 0) {
@@ -507,10 +457,9 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
 
   const saveInvalidateRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const save = useMutation({
-    mutationFn: (people: Person[]) => filesApi.update(file.id, { [field.key]: people }),
+    mutationFn: (op: { add?: Person; remove?: Person }) =>
+      filesApi.update(file.id, { [field.key]: op }),
     onSuccess: () => {
-      // Debounce invalidation to prevent refetch from resetting
-      // other fields' in-flight edits (e.g. adult content).
       if (saveInvalidateRef.current) clearTimeout(saveInvalidateRef.current);
       saveInvalidateRef.current = setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ['file', file.id] });
@@ -521,33 +470,35 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
         queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       }, 1500);
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error, op) => {
+      // Roll back the optimistic local update so the UI matches
+      // what the server actually has.
+      setSelected((prev) => {
+        if (op.add) return prev.filter((p) => personKey(p) !== personKey(op.add!));
+        if (op.remove) return prev.some((p) => personKey(p) === personKey(op.remove!)) ? prev : [...prev, op.remove];
+        return prev;
+      });
+      toast.error(err.message);
+    },
     onSettled: () => {
       pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
     },
   });
 
-  function commit(next: Person[]) {
-    // Refuse to send a payload built from cached state we haven't
-    // verified against the server yet — see the gate explanation
-    // above. The button styling (cursor-wait, opacity) tells the
-    // user something's loading.
-    if (!hasFreshData) return;
-    setSelected(next);
-    pendingSavesRef.current += 1;
-    save.mutate(next);
-  }
-
   function add(person: Person, focusInput = false) {
     if (selected.some((p) => personKey(p) === personKey(person))) return;
-    commit([...selected, person]);
+    setSelected((prev) => [...prev, person]);
+    pendingSavesRef.current += 1;
+    save.mutate({ add: person });
     setQuery('');
     setHighlight(0);
     if (focusInput) inputRef.current?.focus();
   }
 
   function remove(person: Person) {
-    commit(selected.filter((p) => personKey(p) !== personKey(person)));
+    setSelected((prev) => prev.filter((p) => personKey(p) !== personKey(person)));
+    pendingSavesRef.current += 1;
+    save.mutate({ remove: person });
   }
 
   /**
@@ -568,20 +519,26 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
 
   function linkToUser(freePerson: Person, user: { id: string; displayName: string; username: string }) {
     if (freePerson.kind !== 'free') return;
-    const next = selected.map((p) => {
-      if (personKey(p) !== personKey(freePerson)) return p;
-      return { kind: 'user' as const, id: user.id, name: user.displayName };
+    const userPerson: Person = { kind: 'user', id: user.id, name: user.displayName };
+    // Optimistic local replace + dedupe.
+    setSelected((prev) => {
+      const swapped = prev.map((p) =>
+        personKey(p) === personKey(freePerson) ? userPerson : p,
+      );
+      const seen = new Set<string>();
+      const out: Person[] = [];
+      for (const p of swapped) {
+        const k = personKey(p);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(p);
+      }
+      return out;
     });
-    // Drop any duplicate that may have already existed.
-    const seen = new Set<string>();
-    const deduped: Person[] = [];
-    for (const p of next) {
-      const k = personKey(p);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      deduped.push(p);
-    }
-    commit(deduped);
+    // Server-side: remove the free-text entry and add the user.
+    // The PATCH route applies them under the lock.
+    pendingSavesRef.current += 1;
+    save.mutate({ remove: freePerson, add: userPerson } as { add?: Person; remove?: Person });
   }
 
   // Build the suggestion list — merges three sources:
@@ -794,8 +751,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
           ref={inputRef}
           type="text"
           value={query}
-          placeholder={!hasFreshData ? 'Loading latest…' : selected.length === 0 ? 'Add a person or pet…' : 'Add another…'}
-          disabled={!hasFreshData}
+          placeholder={selected.length === 0 ? 'Add a person or pet…' : 'Add another…'}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); setHighlight(0); }}
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 120)}
@@ -815,7 +771,8 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
               setOpen(false);
               setQuery('');
             } else if (e.key === 'Backspace' && query.length === 0 && selected.length > 0) {
-              commit(selected.slice(0, -1));
+              const last = selected[selected.length - 1];
+              if (last) remove(last);
             }
           }}
           className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
@@ -889,7 +846,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
           if (createdName) {
             const person: Person = { kind: 'free', name: createdName };
             if (!selected.some((p) => personKey(p) === personKey(person))) {
-              commit([...selected, person]);
+              add(person);
             }
           }
           queryClient.invalidateQueries({ queryKey: ['file', file.id] });

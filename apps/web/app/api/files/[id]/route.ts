@@ -18,12 +18,110 @@ const archiveMeta = new ArchiveMetadataService();
  * canonical JSON. Anything else lands in `fields.*` (the open-ended
  * custom-metadata bucket: People, Adult Content, EXIF, AI fields,
  * any user-defined metadata field).
- *
- * `tags` is special-cased: it's a JSON `fields.tags: string[]` AND
- * it gets mirrored into the relational `FileTag` join table by the
- * shared `syncTagsForFile` helper.
  */
 const CORE_FIELD_KEYS = new Set(['title', 'description', 'rating']);
+
+/**
+ * Field-update operations a client can send instead of a full array
+ * replacement. The server resolves them against the file's *current*
+ * sidecar value at lock-acquire time, so the merge baseline is always
+ * the latest server state — never whatever the client happened to
+ * have cached. This eliminates the "fields silently disappear when I
+ * edit something else" class of bugs caused by clients submitting
+ * full arrays built on top of stale cached data.
+ *
+ * Shapes accepted on any array-typed field (`tags`, `adult_content`,
+ * `people`, etc.):
+ *
+ *   • Plain array     — full replacement (legacy callers)
+ *   • `null`          — clear the field
+ *   • `{ add: X }`    — add a single value (or array of values)
+ *   • `{ remove: X }` — remove a single value (or array of values)
+ *   • `{ set: [...] }`— explicit replacement (same as plain array)
+ *   • `{ clear: true }` — explicit clear
+ *
+ * `add` and `remove` may be combined in the same op: `{ add: ['X'],
+ * remove: ['Y'] }`.
+ */
+type FieldDelta = {
+  add?: unknown;
+  remove?: unknown;
+  set?: unknown;
+  clear?: boolean;
+};
+
+function isFieldDelta(value: unknown): value is FieldDelta {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const obj = value as Record<string, unknown>;
+  return 'add' in obj || 'remove' in obj || 'set' in obj || 'clear' in obj;
+}
+
+/**
+ * Pick the dedup/identity function for an array's element shape.
+ * Strings dedup case-insensitively. People objects dedup by their
+ * canonical key (`u:<id>` for registered users, `f:<name>` for
+ * free-text). Anything else falls back to JSON identity.
+ */
+function detectKeyFn(sample: unknown): (item: unknown) => string {
+  if (typeof sample === 'string') {
+    return (item) => String(item ?? '').trim().toLowerCase();
+  }
+  if (sample && typeof sample === 'object') {
+    const obj = sample as Record<string, unknown>;
+    if ('kind' in obj || 'name' in obj) {
+      return (item) => {
+        const o = (item ?? {}) as Record<string, unknown>;
+        if (o.kind === 'user' && typeof o.id === 'string') return `u:${o.id}`;
+        const name = typeof o.name === 'string' ? o.name : '';
+        return `f:${name.trim().toLowerCase()}`;
+      };
+    }
+  }
+  return (item) => JSON.stringify(item);
+}
+
+/**
+ * Resolve a delta op against the existing array under the lock. The
+ * caller is responsible for reading `existing` from the source of
+ * truth (the on-disk JSON sidecar) before calling this, so that
+ * concurrent writes serialise cleanly through the per-file lock.
+ */
+function applyFieldDelta(existing: unknown[], op: FieldDelta): unknown[] {
+  if (op.clear) return [];
+  if (op.set !== undefined) {
+    return Array.isArray(op.set) ? op.set.slice() : [];
+  }
+
+  // Establish a key function from whatever's in the array, falling
+  // back to whatever's in the add/remove payloads if the existing
+  // array is empty.
+  const sample =
+    existing[0] ??
+    (Array.isArray(op.add) ? op.add[0] : op.add) ??
+    (Array.isArray(op.remove) ? op.remove[0] : op.remove);
+  const keyFn = detectKeyFn(sample);
+
+  let result = existing.slice();
+
+  if (op.remove !== undefined) {
+    const removeItems = Array.isArray(op.remove) ? op.remove : [op.remove];
+    const removeKeys = new Set(removeItems.map(keyFn));
+    result = result.filter((item) => !removeKeys.has(keyFn(item)));
+  }
+
+  if (op.add !== undefined) {
+    const addItems = Array.isArray(op.add) ? op.add : [op.add];
+    const seen = new Set(result.map(keyFn));
+    for (const item of addItems) {
+      const key = keyFn(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(item);
+    }
+  }
+
+  return result;
+}
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(request);
@@ -52,7 +150,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const body = (await request.json()) as Record<string, unknown>;
 
-  // Per-field permission checks: reject any fields the user can't edit
+  // Per-field permission checks: reject any fields the user can't edit.
   const FIELD_PERM_MAP: Record<string, string> = {
     title: 'items.title',
     description: 'items.description',
@@ -77,41 +175,42 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     );
   }
 
-  // Split incoming body into the core/fields/tags partitions of the
-  // canonical JSON. `tags` is treated like every other array field:
-  // the request body is the full new set. Earlier versions of this
-  // route merged new tags with existing ones, which made it
-  // impossible to REMOVE a tag via PATCH — the client would send
-  // `{tags: ['a']}` expecting 'b' to be dropped, but the server
-  // would union 'b' back in. Callers that only want to add must now
-  // do the read themselves, or use the dedicated add/remove routes.
+  // Partition into core / fields. Tags are NOT special-cased anymore
+  // — they go through `fields` with the same delta-op semantics as
+  // every other array-shaped custom field.
   const core: Record<string, unknown> = {};
-  const fields: Record<string, unknown> = {};
+  const fieldsRaw: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body)) {
-    if (key === 'tags') {
-      if (Array.isArray(value)) {
-        fields.tags = value.filter((t): t is string => typeof t === 'string');
-      } else if (value === null) {
-        fields.tags = [];
-      }
-      continue;
-    }
     if (CORE_FIELD_KEYS.has(key)) {
       core[key] = value;
     } else {
-      fields[key] = value;
+      fieldsRaw[key] = value;
     }
   }
 
-  // Step 1 — write the canonical JSON file + mirror it to the DB row.
-  // The whole read-modify-write cycle is held under a per-file lock
-  // so concurrent edits (e.g. the AI Apply path firing title /
-  // description / tags in parallel) can't trample each other. Without
-  // the lock, the last writer wins and individual fields silently
-  // disappear. The lock is short — it only guards the sidecar + DB
-  // sync, not the fire-and-forget Dropbox upload.
+  // The whole read-modify-write cycle runs under a per-file lock so
+  // any concurrent edit (autosave on a different field, AI Apply,
+  // batch op, indexer EXIF pass) is fully serialised. Crucially, all
+  // delta ops are resolved AFTER acquiring the lock so each op sees
+  // the latest server state — never a stale client cache.
   const metaRoot = metaRootForArchive(before.archiveRootId, root.rootPath, providerTypeForRoot(root.providerType));
-  const { item } = await withFileWriteLock(id, async () => {
+  const { item, resolvedFields } = await withFileWriteLock(id, async () => {
+    // Read the current sidecar so we can resolve any delta ops.
+    const existing = await archiveMeta.readItemByUuid(metaRoot, before.harborItemId);
+
+    const fields: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(fieldsRaw)) {
+      if (isFieldDelta(value)) {
+        const currentArr = (existing?.fields?.[key] as unknown[] | undefined) ?? [];
+        fields[key] = applyFieldDelta(currentArr, value);
+      } else if (value === null) {
+        fields[key] = [];
+      } else {
+        // Plain replacement — array OR scalar (caption, altText, ...).
+        fields[key] = value;
+      }
+    }
+
     const { item } = await archiveMeta.updateItem(
       metaRoot,
       before.path,
@@ -124,48 +223,43 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       { core, fields },
     );
 
-    // Step 2 — mirror the derived DB columns from the freshly-written
-    // JSON. Kept inside the lock so a concurrent reader never sees
-    // the JSON and the DB disagree.
+    // Mirror the derived DB columns from the freshly-written JSON.
+    // Kept inside the lock so a concurrent reader never sees the JSON
+    // and the DB disagree.
     await fileRepo.update(id, fileUpdatePayloadFromJson(item));
     await syncTagsForFile(id, item);
 
-    return { item };
+    return { item, resolvedFields: fields };
   });
 
-  // Step 1b — sync the metadata JSON to Dropbox so it's visible on
-  // all devices and deployments. This runs fire-and-forget so it
-  // doesn't block the response. The JSON written in step 1 is the
-  // canonical content; this just uploads it to Dropbox.
+  // Sync the metadata JSON to Dropbox so it's visible on all devices
+  // and deployments. Fire-and-forget so the response isn't blocked.
   if (root.providerType === 'DROPBOX') {
     const itemJson = JSON.stringify(item, null, 2);
     syncMetadataToDropbox(before.archiveRootId, `items/${before.harborItemId}.json`, itemJson)
       .catch((err) => console.error('[MetaSync] Dropbox item sync failed:', err));
 
-    // Also sync the index.json so other instances can find the UUID
     const index = await archiveMeta.readIndex(metaRoot);
     syncMetadataToDropbox(before.archiveRootId, 'index.json', JSON.stringify(index, null, 2))
       .catch((err) => console.error('[MetaSync] Dropbox index sync failed:', err));
   }
 
-  // Step 2b — ensure Person records exist for every name in
-  // meta.fields.people. This bridges the per-file JSON annotation
-  // with the canonical Person registry so admins always see every
-  // referenced person in the People management page, and the search
-  // filter picker stays in sync.
-  if (fields.people && Array.isArray(fields.people)) {
-    await ensurePersonRecords(fields.people as Array<{ kind?: string; name?: string }>);
+  // Ensure Person records exist for every name in `meta.fields.people`.
+  // This bridges the per-file JSON annotation with the canonical
+  // Person registry so admins always see every referenced person.
+  if (resolvedFields.people && Array.isArray(resolvedFields.people)) {
+    await ensurePersonRecords(resolvedFields.people as Array<{ kind?: string; name?: string }>);
   }
 
-  // Step 3 — audit + realtime fanout.
-  const changedFieldKeys = [...Object.keys(core), ...Object.keys(fields)];
+  // Audit + realtime fanout.
+  const changedFieldKeys = [...Object.keys(core), ...Object.keys(resolvedFields)];
   await audit(
     auth,
     'update',
     'FILE',
     id,
     { title: before.title, description: before.description, rating: before.rating },
-    { core, fields },
+    { core, fields: resolvedFields },
   );
   emit(
     'file.updated',
@@ -185,37 +279,20 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
 /**
  * `DELETE /api/files/:id` is intentionally gone. The only way to
- * remove a file is now to mark it for delete (which moves it to
- * the admin delete queue) via `POST /api/files/:id/delete-request`,
- * and then have an admin approve the request from the admin
- * settings page. This is the contract the rest of the app
- * (detail panel, batch toolbar, viewer) is wired against — there
- * should be no path that hard-deletes user data without admin review.
+ * remove a file is to mark it for delete via
+ * `POST /api/files/:id/delete-request`.
  */
 
-/** Map the schema's provider-type enum to the string `metaRootForArchive` expects. */
 function providerTypeForRoot(providerType: string): string {
   return providerType === 'LOCAL_FILESYSTEM' ? 'local' : 'remote';
 }
 
-/**
- * For every person name in the metadata array, ensure a Person row
- * exists in the DB. This is an upsert-by-name — if a Person with
- * that exact name (case-insensitive) already exists, we skip it.
- * New Person records are created as confirmed (since the user
- * explicitly typed the name, it's not an unverified face cluster).
- *
- * This runs fire-and-forget — a failure here should not block the
- * metadata save.
- */
 async function ensurePersonRecords(people: Array<{ kind?: string; name?: string }>) {
   try {
     for (const entry of people) {
       const name = entry?.name?.trim();
       if (!name) continue;
 
-      // Case-insensitive check: Prisma doesn't support `mode: insensitive`
-      // on findFirst with a non-unique field, so we use raw SQL.
       const existing = await db.$queryRawUnsafe<Array<{ id: string }>>(
         `SELECT id::text FROM persons WHERE lower(name) = lower($1) LIMIT 1`,
         name,
@@ -227,7 +304,6 @@ async function ensurePersonRecords(people: Array<{ kind?: string; name?: string 
       });
     }
   } catch (err) {
-    // Non-fatal — log but don't fail the request
     console.error('[People] Failed to ensure Person records:', err);
   }
 }
