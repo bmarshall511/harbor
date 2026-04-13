@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
 import { FileText, FileIcon, AlertCircle } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 
 interface ContentPreviewProps {
   fileId: string;
@@ -84,12 +85,18 @@ function TextPreview({
           <span className="text-[10px] text-muted-foreground">Truncated preview</span>
         )}
       </div>
-      <pre className={cn(
-        'max-h-64 overflow-auto p-3 text-[11px] leading-relaxed text-foreground/80',
-        'font-mono whitespace-pre-wrap break-words',
-      )}>
-        {displayContent}
-      </pre>
+      {isMarkdown ? (
+        <div className="max-h-[500px] overflow-auto p-4 prose prose-sm dark:prose-invert prose-headings:text-foreground prose-p:text-foreground/80 prose-a:text-primary prose-code:text-xs prose-pre:bg-muted prose-pre:text-foreground/80 max-w-none">
+          <ReactMarkdown>{content}</ReactMarkdown>
+        </div>
+      ) : (
+        <pre className={cn(
+          'max-h-64 overflow-auto p-3 text-[11px] leading-relaxed text-foreground/80',
+          'font-mono whitespace-pre-wrap break-words',
+        )}>
+          {displayContent}
+        </pre>
+      )}
     </div>
   );
 }

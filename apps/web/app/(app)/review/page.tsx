@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { review as reviewApi, getPreviewUrl, archiveRoots as archiveRootsApi, files as filesApi, folders } from '@/lib/api';
 import type { ReviewQueueItem } from '@/lib/api';
@@ -8,6 +9,7 @@ import type { FileDto } from '@harbor/types';
 import { cn } from '@/lib/cn';
 import { getMimeCategory, friendlyName, formatBytes } from '@harbor/utils';
 import { FileDetail } from '@/components/detail-panel';
+import { ContentPreview } from '@/components/content-preview';
 import { toast } from 'sonner';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -85,6 +87,8 @@ function saveSession(session: ReviewSession) {
 
 export default function ReviewPage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [session, setSession] = useState<ReviewSession>(loadSession);
   const [direction, setDirection] = useState<1 | -1>(1);
   const [showFilters, setShowFilters] = useState(false);
@@ -129,17 +133,37 @@ export default function ReviewPage() {
   );
 
   // Seed history with the first queue item on initial load
+  // Seed history: check URL for a specific file ID first, otherwise use first queue item
+  const urlFileId = searchParams.get('file');
   useEffect(() => {
-    if (history.length === 0 && queueItems.length > 0) {
-      setHistory([queueItems[0]!]);
-      setHistoryIndex(0);
+    if (history.length > 0) return;
+    if (queueItems.length === 0) return;
+
+    if (urlFileId) {
+      const match = queueItems.find((item) => item.file.id === urlFileId);
+      if (match) {
+        setHistory([match]);
+        setHistoryIndex(0);
+        return;
+      }
     }
-  }, [history.length, queueItems]);
+    setHistory([queueItems[0]!]);
+    setHistoryIndex(0);
+  }, [history.length, queueItems, urlFileId]);
 
   // Current item: either from history (when going back) or next from queue
   const currentItem = historyIndex >= 0 && historyIndex < history.length
     ? history[historyIndex]!
     : null;
+
+  // Sync current file ID to URL for shareable links
+  useEffect(() => {
+    if (!currentItem) return;
+    const currentUrlFile = searchParams.get('file');
+    if (currentUrlFile !== currentItem.file.id) {
+      router.replace(`/review?file=${currentItem.file.id}`, { scroll: false });
+    }
+  }, [currentItem, searchParams, router]);
 
   // Mark as reviewed
   const markReviewed = useMutation({
@@ -173,14 +197,6 @@ export default function ReviewPage() {
   }, [currentItem, history, historyIndex, queueItems, markReviewed]);
 
   const goNext = useCallback(() => advance(true), [advance]);
-
-  // "Done" — mark as reviewed but stay on the current item
-  const goDone = useCallback(() => {
-    if (!currentItem) return;
-    markReviewed.mutate(currentItem.file.id);
-    setSession((s) => ({ ...s, reviewedToday: s.reviewedToday + 1 }));
-    toast.success('Marked as reviewed');
-  }, [currentItem, markReviewed]);
 
   const goPrev = useCallback(() => {
     if (historyIndex <= 0) return;
@@ -216,13 +232,6 @@ export default function ReviewPage() {
           e.preventDefault();
           goPrev();
           break;
-        case 'd':
-        case 'D':
-          if (!e.metaKey && !e.ctrlKey) {
-            e.preventDefault();
-            goDone();
-          }
-          break;
         case '?':
           e.preventDefault();
           setShowShortcuts((v) => !v);
@@ -235,7 +244,7 @@ export default function ReviewPage() {
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [goNext, goPrev, goDone]);
+  }, [goNext, goPrev]);
 
   // Focus container on mount for keyboard capture
   useEffect(() => {
@@ -388,23 +397,13 @@ export default function ReviewPage() {
           <FolderContext file={currentItem.file} />
         )}
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={goDone}
-            className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-            title="Mark as reviewed and stay"
-          >
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            Done
-          </button>
-          <button
-            onClick={goNext}
-            className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            Next
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
+        <button
+          onClick={goNext}
+          className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+        >
+          Next
+          <ChevronRight className="h-4 w-4" />
+        </button>
       </div>
 
       {/* Shortcuts overlay */}
@@ -489,10 +488,7 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
           ) : isVideo ? (
             <ReviewVideoPlayer file={file} onOpenViewer={() => openViewer(file.id, [file])} />
           ) : (
-            <div className="flex h-48 w-72 flex-col items-center justify-center rounded-lg border border-border bg-muted">
-              <FileIconLarge mimeType={file.mimeType} />
-              <p className="mt-3 text-xs text-muted-foreground">{file.mimeType?.split('/')[1]?.toUpperCase() ?? 'File'}</p>
-            </div>
+            <ReviewContentPreview file={file} />
           )}
         </div>
 
@@ -519,6 +515,30 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
       <div className="w-96 shrink-0 overflow-y-auto border-l border-border bg-card">
         <FileDetail fileId={file.id} />
       </div>
+    </div>
+  );
+}
+
+// ─── Review Content Preview (text, PDF, other) ───────────────
+
+function ReviewContentPreview({ file }: { file: FileDto }) {
+  const isText = file.mimeType?.startsWith('text/') ||
+    file.mimeType === 'application/json' ||
+    file.mimeType === 'application/xml' ||
+    file.mimeType === 'application/pdf';
+
+  if (isText) {
+    return (
+      <div className="w-full max-w-2xl">
+        <ContentPreview fileId={file.id} mimeType={file.mimeType} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-48 w-72 flex-col items-center justify-center rounded-lg border border-border bg-muted">
+      <FileIconLarge mimeType={file.mimeType} />
+      <p className="mt-3 text-xs text-muted-foreground">{file.mimeType?.split('/')[1]?.toUpperCase() ?? 'File'}</p>
     </div>
   );
 }
@@ -1089,9 +1109,8 @@ function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="space-y-2.5 text-sm">
-          <ShortcutRow keys={['→']} label="Next" />
+          <ShortcutRow keys={['→']} label="Next (mark reviewed)" />
           <ShortcutRow keys={['←']} label="Previous" />
-          <ShortcutRow keys={['D']} label="Done (mark reviewed)" />
           <ShortcutRow keys={['Tab']} label="Next field" />
           <ShortcutRow keys={['?']} label="Toggle shortcuts" />
           <ShortcutRow keys={['Esc']} label="Close overlays" />
