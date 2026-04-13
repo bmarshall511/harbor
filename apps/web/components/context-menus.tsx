@@ -117,7 +117,15 @@ export function FileContextMenu({ file, children }: { file: FileDto; children: R
       </ContextMenu.Root>
 
       {showRename && (
-        <RenameDialog entityType="file" entityId={file.id} currentName={file.name} onClose={() => setShowRename(false)} />
+        <RenameDialog
+          entityType="file"
+          entityId={file.id}
+          currentName={file.name}
+          mimeType={file.mimeType}
+          fileCreatedAt={file.fileCreatedAt}
+          fileModifiedAt={file.fileModifiedAt}
+          onClose={() => setShowRename(false)}
+        />
       )}
       {showDelete && (
         <DeleteConfirmDialog entityType="file" entityId={file.id} entityName={file.name} onClose={() => setShowDelete(false)} />

@@ -79,6 +79,13 @@ export interface HarborItemJson {
     modifiedAt?: string; // file modification time (filesystem)
     importedAt: string; // when Harbor first saw the file
     updatedAt: string; // last metadata change
+    /**
+     * User-supplied override for the creation date. When set, this
+     * wins over the filesystem `createdAt` everywhere Harbor renders
+     * a file's date — including after a reindex. Cleared by passing
+     * `null` through `updateItem`.
+     */
+    createdAtOverride?: string;
   };
   core: {
     title?: string;
@@ -246,7 +253,16 @@ export class ArchiveMetadataService {
     archiveRootPath: string,
     relPath: string,
     init: { name: string; hash?: string; createdAt?: Date | null; modifiedAt?: Date | null },
-    updates: { core?: Partial<HarborItemJson['core']>; fields?: Record<string, unknown> },
+    updates: {
+      core?: Partial<HarborItemJson['core']>;
+      fields?: Record<string, unknown>;
+      /**
+       * Narrow write channel for user-edited system fields. Pass
+       * `createdAtOverride: string` to set, or `null` to clear.
+       * Untouched keys are preserved.
+       */
+      systemOverride?: { createdAtOverride?: string | null };
+    },
   ): Promise<{ uuid: string; item: HarborItemJson }> {
     const uuid = await this.getOrCreateItemId(archiveRootPath, relPath);
     const existing = await this.readItemByUuid(archiveRootPath, uuid);
@@ -268,6 +284,13 @@ export class ArchiveMetadataService {
     };
 
     // Always refresh the system block with the latest filesystem facts.
+    // `createdAtOverride` is preserved unless the caller explicitly
+    // writes to it via `systemOverride`.
+    const nextCreatedAtOverride =
+      updates.systemOverride && 'createdAtOverride' in updates.systemOverride
+        ? (updates.systemOverride.createdAtOverride ?? undefined)
+        : base.system.createdAtOverride;
+
     base.system = {
       ...base.system,
       path: relPath,
@@ -276,6 +299,7 @@ export class ArchiveMetadataService {
       createdAt: init.createdAt?.toISOString() ?? base.system.createdAt,
       modifiedAt: init.modifiedAt?.toISOString() ?? base.system.modifiedAt,
       updatedAt: now,
+      createdAtOverride: nextCreatedAtOverride,
     };
 
     if (updates.core) {

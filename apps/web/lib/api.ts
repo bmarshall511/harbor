@@ -83,10 +83,18 @@ export const files = {
       method: 'POST',
       body: JSON.stringify({ targetFolderId }),
     }),
-  rename: (fileId: string, newName: string) =>
+  /**
+   * Rename a file and/or update its user-canonical creation date.
+   * Either field may be provided independently. Passing
+   * `fileCreatedAt: null` clears a previously-set override.
+   */
+  rename: (
+    fileId: string,
+    update: { newName?: string; fileCreatedAt?: string | null },
+  ) =>
     request<FileDto>(`/files/${fileId}/rename`, {
       method: 'POST',
-      body: JSON.stringify({ newName }),
+      body: JSON.stringify(update),
     }),
   cacheStatus: (fileId: string) =>
     request<{

@@ -6,7 +6,7 @@ import { files as filesApi, folders as foldersApi } from '@/lib/api';
 import { getMimeCategory } from '@harbor/utils';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/cn';
-import { Pencil, Trash2, FolderPlus, AlertTriangle, Wand2, Pen } from 'lucide-react';
+import { Pencil, Trash2, FolderPlus, AlertTriangle, Wand2, Pen, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 
 // ── Rename Dialog ───────────────────────────────────────────────
@@ -20,8 +20,11 @@ import { toast } from 'sonner';
 //
 //          [ DATE ]   _   [ LABEL ]   _   [ NUMBER ]   .ext
 //
-//      • DATE is read-only, computed from the file's creation date
-//        (with a small format selector: YYYY-MM-DD or YYYYs).
+//      • DATE is picked by the user via a dedicated Date control
+//        below the filename pieces. The control has a native date
+//        picker (keyboard + screen-reader friendly), a segmented
+//        format switch (ISO / Decade / Unknown), and a Reset button
+//        that reverts to the file's original creation date.
 //      • LABEL is a free-text input that defaults to "photo" for
 //        images and "video" for videos. The user can type whatever
 //        they want here ("birthday", "trip-2019", etc.).
@@ -29,7 +32,10 @@ import { toast } from 'sonner';
 //      • The extension is shown locked at the right side, computed
 //        from the original filename — no picker needed.
 //
-//      A live preview of the full filename is shown below.
+//      A live preview of the full filename is shown below. When the
+//      user picks a date, it is sent to the API as `fileCreatedAt`
+//      and written through the canonical metadata sidecar so future
+//      reindexes preserve it.
 
 interface RenameDialogProps {
   entityType: 'file' | 'folder';
@@ -82,13 +88,22 @@ export function RenameDialog({
   const [label, setLabel] = useState(defaultLabel);
   useEffect(() => { setLabel(defaultLabel); }, [defaultLabel]);
 
-  // Resolve a date for the preview, in priority order: creation,
-  // modified, today.
-  const previewDate = useMemo(() => {
+  // The canonical "original" date we reset to: file creation if known,
+  // otherwise modified, otherwise null (the picker stays empty and the
+  // format stays `unknown` until the user picks something).
+  const originalDate = useMemo<Date | null>(() => {
     if (fileCreatedAt) return new Date(fileCreatedAt);
     if (fileModifiedAt) return new Date(fileModifiedAt);
-    return new Date();
+    return null;
   }, [fileCreatedAt, fileModifiedAt]);
+
+  // The date the user is currently working with. Starts at the
+  // original; edited by the date picker and the Reset button.
+  const [pickedDate, setPickedDate] = useState<Date | null>(originalDate);
+  // Date used to render the filename preview. Falls back to today
+  // only when the format is not `unknown` AND the picker is empty —
+  // that's the "I have no date, use today" path the old code took.
+  const previewDate = pickedDate ?? new Date();
 
   // Extension is fixed and dynamic (taken from the original filename).
   const ext = useMemo(() => extractExtension(currentName), [currentName]);
@@ -115,10 +130,25 @@ export function RenameDialog({
 
   const targetName = tab === 'manual' ? name : previewName;
 
+  // Has the user moved the picked date off the original? Compared by
+  // calendar-day identity (toLocalDateInputValue) so timezone rounding
+  // doesn't produce a false "dirty" flag.
+  const dateChanged = useMemo(() => {
+    if (tab !== 'format') return false;
+    return toLocalDateInputValue(pickedDate) !== toLocalDateInputValue(originalDate);
+  }, [tab, pickedDate, originalDate]);
+
+  const nameChanged = targetName.trim().length > 0 && targetName !== currentName;
+
   const mutation = useMutation({
     mutationFn: async () => {
       if (entityType === 'file') {
-        return filesApi.rename(entityId, targetName);
+        const update: { newName?: string; fileCreatedAt?: string | null } = {};
+        if (nameChanged) update.newName = targetName;
+        if (dateChanged) {
+          update.fileCreatedAt = pickedDate ? pickedDate.toISOString() : null;
+        }
+        return filesApi.rename(entityId, update);
       }
       return foldersApi.update(entityId, { description: undefined });
     },
@@ -131,7 +161,10 @@ export function RenameDialog({
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const disabled = !targetName.trim() || targetName === currentName || mutation.isPending;
+  const disabled =
+    mutation.isPending ||
+    !targetName.trim() ||
+    (!nameChanged && !dateChanged);
 
   return (
     <DialogOverlay onClose={onClose}>
@@ -181,25 +214,14 @@ export function RenameDialog({
             {/* Inline three-piece editor: date | label | number . ext */}
             <div className="rounded-lg border border-border bg-muted/20 p-2.5">
               <div className="flex flex-wrap items-center gap-1 font-mono text-[11px]">
-                {/* Date — click cycles iso → decade → unknown → iso */}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setDateFormat((f) =>
-                      f === 'iso' ? 'decade' : f === 'decade' ? 'unknown' : 'iso',
-                    )
-                  }
-                  title={
-                    dateFormat === 'iso'
-                      ? 'YYYY-MM-DD · click to switch'
-                      : dateFormat === 'decade'
-                        ? 'YYYYs · click to switch'
-                        : 'unknown_date · click to switch'
-                  }
-                  className="rounded-md border border-border bg-background px-2 py-1 text-foreground hover:border-primary/40"
+                {/* Date — non-interactive display; edited via the
+                    Date control row below. */}
+                <span
+                  className="rounded-md border border-border bg-background px-2 py-1 text-foreground"
+                  title="Edit the date below"
                 >
                   {datePart}
-                </button>
+                </span>
                 <Sep />
                 {/* Label — editable, defaults to photo/video/file */}
                 <input
@@ -208,6 +230,7 @@ export function RenameDialog({
                   onChange={(e) => setLabel(e.target.value)}
                   placeholder={defaultLabel}
                   className="w-32 rounded-md border border-input bg-background px-2 py-1 font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-ring"
+                  aria-label="Label"
                 />
                 <Sep />
                 {/* Sequence — text so leading zeros (001) work */}
@@ -230,14 +253,39 @@ export function RenameDialog({
               </div>
             </div>
 
+            {/* Date control row */}
+            <DateControlRow
+              pickedDate={pickedDate}
+              originalDate={originalDate}
+              dateFormat={dateFormat}
+              onPickDate={(d) => {
+                setPickedDate(d);
+                // Picking a real date in unknown mode implies the
+                // user wants a real date in the filename — jump to
+                // ISO so the preview reflects it immediately.
+                if (d && dateFormat === 'unknown') setDateFormat('iso');
+              }}
+              onFormatChange={setDateFormat}
+              onReset={() => {
+                setPickedDate(originalDate);
+                setDateFormat(originalDate ? 'iso' : 'unknown');
+              }}
+            />
+
             {/* Live preview */}
             <div className="rounded-md border border-dashed border-border bg-muted/30 p-2">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Preview</p>
               <code className="mt-0.5 block break-all text-xs font-medium">{previewName}</code>
-              {dateFormat !== 'unknown' && !fileCreatedAt && (
+              {dateChanged && (
+                <p className="mt-1 text-[10px] text-primary/80">
+                  Saved in Harbor only — the file's own timestamps are left alone.
+                </p>
+              )}
+              {dateFormat !== 'unknown' && !pickedDate && (
                 <p className="mt-1 text-[10px] text-amber-500/80">
-                  No creation date on file — using {fileModifiedAt ? 'modified date' : 'today'}.
-                  Click the date chip to use <code className="rounded bg-muted px-1">unknown_date</code> instead.
+                  No creation date on file — using today.
+                  Switch to <code className="rounded bg-muted px-1">unknown_date</code> below
+                  if you'd rather leave the date blank.
                 </p>
               )}
             </div>
@@ -265,6 +313,128 @@ function Sep() {
   return <span className="text-muted-foreground">_</span>;
 }
 
+// ── Date control row (format mode) ──────────────────────────────
+//
+// Native `<input type="date">` for the actual date, plus a segmented
+// control for how the date renders in the filename (ISO / Decade /
+// Unknown), plus a Reset button that reverts to the original
+// creation date from the file's metadata. The native input is used
+// deliberately: it's keyboard-navigable, screen-reader-labelled,
+// locale-aware, and pulls in zero dependencies.
+
+interface DateControlRowProps {
+  pickedDate: Date | null;
+  originalDate: Date | null;
+  dateFormat: DateFormat;
+  onPickDate: (d: Date | null) => void;
+  onFormatChange: (f: DateFormat) => void;
+  onReset: () => void;
+}
+
+function DateControlRow({
+  pickedDate,
+  originalDate,
+  dateFormat,
+  onPickDate,
+  onFormatChange,
+  onReset,
+}: DateControlRowProps) {
+  const inputValue = toLocalDateInputValue(pickedDate);
+  const hasOriginal = originalDate !== null;
+  const isDirty =
+    toLocalDateInputValue(pickedDate) !== toLocalDateInputValue(originalDate);
+
+  return (
+    <div className="rounded-lg border border-border bg-muted/10 p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          Date
+        </label>
+        <button
+          type="button"
+          onClick={onReset}
+          disabled={!isDirty}
+          aria-label="Reset date to original"
+          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground transition hover:text-foreground disabled:opacity-40"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Reset
+        </button>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <input
+          type="date"
+          value={inputValue}
+          onChange={(e) => {
+            const next = fromLocalDateInputValue(e.target.value);
+            onPickDate(next);
+          }}
+          aria-label="Creation date"
+          className="rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+
+        <div role="radiogroup" aria-label="Date format" className="flex gap-0.5 rounded-md border border-border p-0.5">
+          <FormatPill
+            label="ISO"
+            active={dateFormat === 'iso'}
+            onClick={() => onFormatChange('iso')}
+            title="YYYY-MM-DD"
+          />
+          <FormatPill
+            label="Decade"
+            active={dateFormat === 'decade'}
+            onClick={() => onFormatChange('decade')}
+            title="YYYYs"
+          />
+          <FormatPill
+            label="Unknown"
+            active={dateFormat === 'unknown'}
+            onClick={() => onFormatChange('unknown')}
+            title="unknown_date"
+          />
+        </div>
+      </div>
+
+      {!hasOriginal && (
+        <p className="mt-1.5 text-[10px] text-muted-foreground">
+          This file has no stored creation date. Pick one to save it.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function FormatPill({
+  label,
+  active,
+  onClick,
+  title,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      title={title}
+      onClick={onClick}
+      className={cn(
+        'rounded-[4px] px-2 py-0.5 text-[10px] font-medium transition',
+        active
+          ? 'bg-accent text-foreground'
+          : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
 // ── Format helpers ──────────────────────────────────────────────
 
 function isoDate(d: Date): string {
@@ -272,6 +442,32 @@ function isoDate(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * Convert a `Date` into the `YYYY-MM-DD` string the native
+ * `<input type="date">` expects, using the user's **local**
+ * calendar day. Returns `''` for a null date (an empty input).
+ * Must match `isoDate` — that's why we use the same local-time
+ * accessors instead of `toISOString().slice(0, 10)` (which is UTC
+ * and will occasionally be a day off).
+ */
+function toLocalDateInputValue(d: Date | null): string {
+  if (!d) return '';
+  return isoDate(d);
+}
+
+/**
+ * Parse the `YYYY-MM-DD` string out of a native date input into a
+ * `Date` anchored at local midnight. Returns `null` for an empty
+ * string (the user cleared the field).
+ */
+function fromLocalDateInputValue(value: string): Date | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, y, m, d] = match;
+  return new Date(Number(y), Number(m) - 1, Number(d));
 }
 
 function decadeBucket(d: Date): string {

@@ -16,10 +16,21 @@ import type { HarborItemJson } from '@harbor/providers';
  */
 export function fileUpdatePayloadFromJson(item: HarborItemJson) {
   const core = item.core ?? {};
+  const override = item.system?.createdAtOverride;
+  // When the user has set a date override, it takes precedence over
+  // whatever the indexer just stat'd off disk. Callers spread this
+  // payload *after* the raw stat values, so returning `fileCreatedAt`
+  // here overrides them. When there's no override, we omit the key
+  // entirely so the stat value continues to win.
+  const overridePayload =
+    typeof override === 'string' && override.length > 0
+      ? { fileCreatedAt: new Date(override) }
+      : {};
   return {
     title: core.title ?? null,
     description: core.description ?? null,
     rating: core.rating ?? null,
+    ...overridePayload,
     // Mirror the entire JSON into the JsonB column for search.
     // We strip the per-file `system.path/name` so that searching the
     // metadata column doesn't accidentally hit the filesystem path.
@@ -37,6 +48,7 @@ function stripSystemFromJson(item: HarborItemJson) {
       modifiedAt: item.system?.modifiedAt,
       importedAt: item.system?.importedAt,
       updatedAt: item.system?.updatedAt,
+      createdAtOverride: item.system?.createdAtOverride,
     },
   };
 }
