@@ -81,7 +81,7 @@ export function DetailPanel() {
   );
 }
 
-function FileDetail({ fileId }: { fileId: string }) {
+export function FileDetail({ fileId }: { fileId: string }) {
   const [showRename, setShowRename] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const openViewer = useAppStore((s) => s.openViewer);

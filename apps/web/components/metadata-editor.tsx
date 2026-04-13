@@ -146,12 +146,10 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
             <AiSuggestButton
               fileId={file.id}
               onSelectTitle={(v) => {
-                setFormData((prev) => ({ ...prev, title: v }));
-                setEditing(true);
+                mutation.mutate({ title: v });
               }}
               onSelectDescription={(v) => {
-                setFormData((prev) => ({ ...prev, description: v }));
-                setEditing(true);
+                mutation.mutate({ description: v });
               }}
               onSelectTags={async (aiTags) => {
                 try {
@@ -185,28 +183,35 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
         </div>
       </div>
 
-      {/* Title + Description — permission-gated */}
+      {/* Title + Description — always visible, auto-save on blur */}
       <div className="space-y-2">
-        {canView('title') && (editing && canEdit('title') ? (
-          <EditField label="Title" value={formData.title ?? ''} onChange={(v) => setField('title', v)} />
-        ) : canView('title') ? (
-          <ClickToEditField
+        {canView('title') && (
+          <AutoSaveField
             label="Title"
-            value={file.title}
+            value={file.title ?? ''}
             placeholder={canEdit('title') ? 'Add a title...' : undefined}
-            onEdit={canEdit('title') ? () => setEditing(true) : undefined}
+            editable={canEdit('title')}
+            onSave={(v) => {
+              if (v !== (file.title ?? '')) {
+                mutation.mutate({ title: v || null });
+              }
+            }}
           />
-        ) : null)}
-        {canView('description') && (editing && canEdit('description') ? (
-          <EditField label="Description" value={formData.description ?? ''} onChange={(v) => setField('description', v)} multiline />
-        ) : canView('description') ? (
-          <ClickToEditField
+        )}
+        {canView('description') && (
+          <AutoSaveField
             label="Description"
-            value={file.description}
+            value={file.description ?? ''}
             placeholder={canEdit('description') ? 'Add a description...' : undefined}
-            onEdit={canEdit('description') ? () => setEditing(true) : undefined}
+            editable={canEdit('description')}
+            multiline
+            onSave={(v) => {
+              if (v !== (file.description ?? '')) {
+                mutation.mutate({ description: v || null });
+              }
+            }}
           />
-        ) : null)}
+        )}
       </div>
 
       {/* Render remaining fields from templates in order */}
@@ -893,6 +898,94 @@ function MetaField({ label, value }: { label: string; value: string }) {
     <div className="flex gap-2 text-xs">
       <span className="shrink-0 text-muted-foreground w-20">{label}</span>
       <span className="break-words">{value}</span>
+    </div>
+  );
+}
+
+function AutoSaveField({ label, value, placeholder, editable, multiline, onSave }: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  editable?: boolean;
+  multiline?: boolean;
+  onSave: (value: string) => void;
+}) {
+  const [localValue, setLocalValue] = useState(value);
+  const [focused, setFocused] = useState(false);
+
+  // Sync from server when value changes externally (but not while editing)
+  const prevValueRef = useRef(value);
+  useEffect(() => {
+    if (!focused && prevValueRef.current !== value) {
+      setLocalValue(value);
+      prevValueRef.current = value;
+    }
+  }, [value, focused]);
+
+  const handleBlur = () => {
+    setFocused(false);
+    if (localValue !== value) {
+      onSave(localValue);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !multiline) {
+      e.preventDefault();
+      (e.target as HTMLElement).blur();
+    }
+    if (e.key === 'Escape') {
+      setLocalValue(value);
+      (e.target as HTMLElement).blur();
+    }
+  };
+
+  if (!editable) {
+    if (!value) return null;
+    return (
+      <div>
+        <label className="mb-1 block text-[11px] font-medium text-muted-foreground">{label}</label>
+        <div className="px-2 py-1 text-xs text-foreground">{value}</div>
+      </div>
+    );
+  }
+
+  const sharedClasses = cn(
+    'w-full rounded border px-2 py-1 text-xs transition-colors',
+    'focus:outline-none focus:ring-1 focus:ring-ring focus:border-input',
+    focused
+      ? 'border-input bg-background'
+      : localValue
+        ? 'border-transparent bg-transparent hover:border-input/50'
+        : 'border-transparent bg-transparent text-muted-foreground/50 italic hover:border-input/50',
+  );
+
+  return (
+    <div>
+      <label className="mb-1 block text-[11px] font-medium text-muted-foreground">{label}</label>
+      {multiline ? (
+        <textarea
+          value={localValue}
+          onChange={(e) => setLocalValue(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          rows={2}
+          className={cn(sharedClasses, 'resize-none')}
+        />
+      ) : (
+        <input
+          type="text"
+          value={localValue}
+          onChange={(e) => setLocalValue(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          className={sharedClasses}
+        />
+      )}
     </div>
   );
 }

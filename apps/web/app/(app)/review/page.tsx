@@ -7,10 +7,7 @@ import type { ReviewQueueItem } from '@/lib/api';
 import type { FileDto } from '@harbor/types';
 import { cn } from '@/lib/cn';
 import { getMimeCategory, friendlyName, formatBytes } from '@harbor/utils';
-import { FileMetadataEditor } from '@/components/metadata-editor';
-import { FavoriteButton } from '@/components/favorite-button';
-import { CollectionButton } from '@/components/collection-button';
-import { RenameDialog, DeleteConfirmDialog } from '@/components/file-operations';
+import { FileDetail } from '@/components/detail-panel';
 import { toast } from 'sonner';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -28,16 +25,13 @@ import {
   FileAudio,
   FileText,
   File,
-  Sparkles,
   CheckCircle2,
   FolderOpen,
   Pencil,
-  RefreshCw,
   Play,
   Pause,
   Volume2,
   VolumeX,
-  Trash2,
   Copy,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
@@ -521,148 +515,10 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
         </div>
       </div>
 
-      {/* Right: Metadata editor panel */}
-      <div className="w-[380px] shrink-0 overflow-y-auto border-l border-border bg-card p-4 space-y-4">
-        {/* Actions row */}
-        <div className="flex items-center gap-1.5">
-          <FavoriteButton entityType="FILE" entityId={file.id} />
-          <CollectionButton entityType="FILE" entityId={file.id} />
-          <button
-            onClick={() => setShowRename(true)}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label="Rename file"
-            title="Rename"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={() => reindexMutation.mutate()}
-            disabled={reindexMutation.isPending}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-            aria-label="Re-index file"
-            title="Re-index"
-          >
-            <RefreshCw className={cn('h-3.5 w-3.5', reindexMutation.isPending && 'animate-spin')} />
-          </button>
-          <button
-            onClick={() => setShowDelete(true)}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-            aria-label="Delete file"
-            title="Delete"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        {/* File info compact */}
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs rounded-lg border border-border bg-muted/20 p-2.5">
-          <InfoItem label="Size" value={formatBytes(Number(file.size))} />
-          <InfoItem label="Type" value={file.mimeType?.split('/')[1]?.toUpperCase() ?? '—'} />
-          {(() => {
-            const w = file.meta?.fields?.width as number | undefined;
-            const h = file.meta?.fields?.height as number | undefined;
-            return w && h ? <InfoItem label="Dimensions" value={`${w}\u00D7${h}`} /> : null;
-          })()}
-          {(() => {
-            const d = file.meta?.fields?.duration as number | undefined;
-            if (d == null) return null;
-            const m = Math.floor(d / 60);
-            const s = Math.floor(d % 60);
-            return <InfoItem label="Duration" value={`${m}:${s.toString().padStart(2, '0')}`} />;
-          })()}
-          {(() => {
-            const f = file.meta?.fields ?? {};
-            const camera = [f.cameraMake, f.cameraModel].filter(Boolean).join(' ');
-            return camera ? <InfoItem label="Camera" value={camera as string} /> : null;
-          })()}
-          {!!file.meta?.fields?.lensModel && <InfoItem label="Lens" value={String(file.meta.fields.lensModel)} />}
-          {file.meta?.fields?.iso != null && <InfoItem label="ISO" value={String(file.meta.fields.iso)} />}
-          {file.meta?.fields?.aperture != null && <InfoItem label="Aperture" value={`f/${file.meta.fields.aperture}`} />}
-          {!!file.meta?.fields?.shutterSpeed && <InfoItem label="Shutter" value={`${String(file.meta.fields.shutterSpeed)}s`} />}
-          {file.meta?.fields?.focalLength != null && (
-            <InfoItem label="Focal" value={`${file.meta.fields.focalLength}mm${file.meta.fields.focalLength35mm ? ` (${file.meta.fields.focalLength35mm}mm)` : ''}`} />
-          )}
-          {!!file.meta?.fields?.exposureProgram && <InfoItem label="Exposure" value={String(file.meta.fields.exposureProgram)} />}
-          {!!file.meta?.fields?.whiteBalance && <InfoItem label="White Bal." value={String(file.meta.fields.whiteBalance)} />}
-          {file.meta?.fields?.flash != null && <InfoItem label="Flash" value={file.meta.fields.flash ? 'Fired' : 'No flash'} />}
-          {!!file.meta?.fields?.colorSpace && <InfoItem label="Color" value={String(file.meta.fields.colorSpace)} />}
-          {!!file.meta?.fields?.software && <InfoItem label="Software" value={String(file.meta.fields.software)} />}
-          {!!file.meta?.fields?.dateTaken && (
-            <InfoItem label="Taken" value={new Date(String(file.meta.fields.dateTaken)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />
-          )}
-          {file.fileCreatedAt && (
-            <InfoItem label="Created" value={new Date(file.fileCreatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />
-          )}
-          {file.fileModifiedAt && (
-            <InfoItem label="Modified" value={new Date(file.fileModifiedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} />
-          )}
-          {file.meta?.fields?.gpsLatitude != null && file.meta?.fields?.gpsLongitude != null && (
-            <InfoItem label="Location" value={`${Number(file.meta.fields.gpsLatitude).toFixed(6)}, ${Number(file.meta.fields.gpsLongitude).toFixed(6)}`} />
-          )}
-          {file.meta?.fields?.gpsAltitude != null && (
-            <InfoItem label="Altitude" value={`${Number(file.meta.fields.gpsAltitude).toFixed(0)}m`} />
-          )}
-        </div>
-
-        {/* Technical details */}
-        <div className="space-y-1.5 text-xs">
-          <CopyableItem label="File" value={file.name} />
-          <CopyableItem label="Path" value={file.path} />
-          {file.hash && <CopyableItem label="Hash" value={file.hash} truncate />}
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground shrink-0 w-12">Status</span>
-            <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium',
-              file.status === 'INDEXED' ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'
-            )}>{file.status}</span>
-          </div>
-        </div>
-
-        {/* Metadata editor — reuses the existing component which handles
-            title, description, caption, altText, tags, people, multiselect,
-            custom fields, and AI suggestions */}
-        <div className="border-t border-border pt-3">
-          <FileMetadataEditor file={file} />
-        </div>
-
-        {/* AI Tags (read-only) */}
-        {(() => {
-          const aiTags = file.meta?.fields?.aiTags;
-          if (!Array.isArray(aiTags) || aiTags.length === 0) return null;
-          return (
-            <div>
-              <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">AI Tags</h4>
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {(aiTags as string[]).map((tag) => (
-                  <span key={tag} className="rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted-foreground">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
+      {/* Right: Reuse the same FileDetail component as the item pullout */}
+      <div className="w-96 shrink-0 overflow-y-auto border-l border-border bg-card">
+        <FileDetail fileId={file.id} />
       </div>
-
-      {/* Rename dialog */}
-      {showRename && (
-        <RenameDialog
-          entityType="file"
-          entityId={file.id}
-          currentName={file.name}
-          mimeType={file.mimeType}
-          fileCreatedAt={file.fileCreatedAt}
-          fileModifiedAt={file.fileModifiedAt}
-          onClose={() => setShowRename(false)}
-        />
-      )}
-      {showDelete && (
-        <DeleteConfirmDialog
-          entityType="file"
-          entityId={file.id}
-          entityName={file.name}
-          onClose={() => setShowDelete(false)}
-        />
-      )}
     </div>
   );
 }
