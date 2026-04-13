@@ -429,8 +429,7 @@ function ReviewCard({ item }: { item: ReviewQueueItem }) {
   const { data: freshFile } = useQuery({
     queryKey: ['file', item.file.id],
     queryFn: () => filesApi.get(item.file.id),
-    initialData: item.file,
-    staleTime: 10_000,
+    placeholderData: item.file,
   });
   const file = freshFile ?? item.file;
   const category = getMimeCategory(file.mimeType);
