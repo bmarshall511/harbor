@@ -6,8 +6,8 @@ import { requireAuth, requirePermission, permissionService } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { emit } from '@/lib/events';
 import { serializeFile } from '@/lib/file-dto';
+import { withFileWriteLock } from '@harbor/utils';
 import { syncMetadataToDropbox } from '@/lib/dropbox-metadata-sync';
-import { withFileWriteLock } from '@/lib/file-write-lock';
 
 const fileRepo = new FileRepository();
 const rootRepo = new ArchiveRootRepository();
@@ -78,15 +78,21 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   // Split incoming body into the core/fields/tags partitions of the
-  // canonical JSON. Tags are merged with what's already on the file
-  // (existing tags + new ones); core/fields are upserted (set or clear).
+  // canonical JSON. `tags` is treated like every other array field:
+  // the request body is the full new set. Earlier versions of this
+  // route merged new tags with existing ones, which made it
+  // impossible to REMOVE a tag via PATCH — the client would send
+  // `{tags: ['a']}` expecting 'b' to be dropped, but the server
+  // would union 'b' back in. Callers that only want to add must now
+  // do the read themselves, or use the dedicated add/remove routes.
   const core: Record<string, unknown> = {};
   const fields: Record<string, unknown> = {};
-  let nextTags: string[] | null = null;
   for (const [key, value] of Object.entries(body)) {
     if (key === 'tags') {
       if (Array.isArray(value)) {
-        nextTags = value.filter((t): t is string => typeof t === 'string');
+        fields.tags = value.filter((t): t is string => typeof t === 'string');
+      } else if (value === null) {
+        fields.tags = [];
       }
       continue;
     }
@@ -95,14 +101,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     } else {
       fields[key] = value;
     }
-  }
-
-  if (nextTags) {
-    // Existing tag names already on the file, merged with the
-    // incoming list to preserve any tag the client did not echo back.
-    const existingTagNames = before.tags.map((t) => t.tag.name);
-    const merged = Array.from(new Set([...existingTagNames, ...nextTags]));
-    fields.tags = merged;
   }
 
   // Step 1 — write the canonical JSON file + mirror it to the DB row.

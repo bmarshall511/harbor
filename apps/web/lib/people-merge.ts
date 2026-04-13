@@ -16,6 +16,7 @@
  */
 
 import { db } from '@harbor/database';
+import { withFileWriteLock } from '@harbor/utils';
 
 export type Person =
   | { kind: 'user'; id: string; name: string }
@@ -159,15 +160,17 @@ export async function mergeFreeTextIntoUser(user: {
       file.archiveRoot.rootPath,
       file.archiveRoot.providerType === 'LOCAL_FILESYSTEM' ? 'local' : 'remote',
     );
-    const { item } = await archiveMeta.updateItem(
-      metaRoot,
-      file.path,
-      { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-      { fields: updatedFields },
-    );
-    await db.file.update({
-      where: { id: file.id },
-      data: fileUpdatePayloadFromJson(item),
+    await withFileWriteLock(file.id, async () => {
+      const { item } = await archiveMeta.updateItem(
+        metaRoot,
+        file.path,
+        { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
+        { fields: updatedFields },
+      );
+      await db.file.update({
+        where: { id: file.id },
+        data: fileUpdatePayloadFromJson(item),
+      });
     });
     modified++;
   }

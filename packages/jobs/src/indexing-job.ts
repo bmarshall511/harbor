@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { db, FileRepository, FolderRepository, ArchiveRootRepository, SettingsRepository } from '@harbor/database';
 import { LocalFilesystemProvider, DropboxProvider, ArchiveMetadataService } from '@harbor/providers';
-import { guessMimeType } from '@harbor/utils';
+import { guessMimeType, withFileWriteLock } from '@harbor/utils';
 import { JobManager } from './job-manager';
 import { PreviewJob } from './preview-job';
 import { toRelativePath } from './path-normalize';
@@ -448,10 +448,14 @@ export class IndexingJob {
 
             if (!isCloudEnv && !existingItem) {
               const itemMetaRoot = metaRootForArchive(archiveRootId, archiveRootPath, provider.type);
-              await this.archiveMeta.updateItem(itemMetaRoot, normalizedPath, {
-                name: entry.name, hash: hash ?? undefined,
-                createdAt: entry.createdAt, modifiedAt: entry.modifiedAt,
-              }, {});
+              // Hold the per-file lock so a user edit racing with
+              // the indexer's minimal-JSON write can't be clobbered.
+              await withFileWriteLock(file.id, () =>
+                this.archiveMeta.updateItem(itemMetaRoot, normalizedPath, {
+                  name: entry.name, hash: hash ?? undefined,
+                  createdAt: entry.createdAt, modifiedAt: entry.modifiedAt,
+                }, {}),
+              );
             }
             if (existingItem) {
               await syncTagsForFile(file.id, existingItem);
@@ -583,18 +587,21 @@ export class IndexingJob {
             await this._reportProgress();
 
             // If no JSON existed yet, create a minimal one so other
-            // tools can find this file by UUID right away.
+            // tools can find this file by UUID right away. Lock
+            // against concurrent user edits.
             if (!existingItem) {
-              await this.archiveMeta.updateItem(
-                itemMetaRoot,
-                normalizedPath,
-                {
-                  name: entry.name,
-                  hash: hash ?? undefined,
-                  createdAt: entry.createdAt,
-                  modifiedAt: entry.modifiedAt,
-                },
-                {},
+              await withFileWriteLock(file.id, () =>
+                this.archiveMeta.updateItem(
+                  itemMetaRoot,
+                  normalizedPath,
+                  {
+                    name: entry.name,
+                    hash: hash ?? undefined,
+                    createdAt: entry.createdAt,
+                    modifiedAt: entry.modifiedAt,
+                  },
+                  {},
+                ),
               );
             }
 

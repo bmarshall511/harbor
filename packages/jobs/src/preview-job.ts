@@ -4,9 +4,10 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { db, FileRepository, ArchiveRootRepository } from '@harbor/database';
 import { ArchiveMetadataService } from '@harbor/providers';
-import { isImageMime, isVideoMime, isPdfMime } from '@harbor/utils';
+import { isImageMime, isVideoMime, isPdfMime, withFileWriteLock } from '@harbor/utils';
 import { JobManager } from './job-manager';
 import { metaRootForArchive } from './metadata-root';
+import { fileUpdatePayloadFromJson } from './metadata-sync';
 import type { PreviewSize } from '@harbor/database';
 
 const execFileAsync = promisify(execFile);
@@ -163,15 +164,24 @@ export class PreviewJob {
               }
             }
 
+            // EXIF extraction runs alongside user edits — without
+            // the per-file write lock, preview-job and a concurrent
+            // PATCH both read the same base JSON, both merge their
+            // own fields, and whichever writes second clobbers the
+            // other's changes. This was the intermittent "adult
+            // content / people sometimes don't save" bug. The lock
+            // serialises both paths. We also go through
+            // fileUpdatePayloadFromJson so the DB `meta` column keeps
+            // the same stripped shape the rest of the app expects.
             const metaRoot = metaRootForArchive(file.archiveRootId, root.rootPath, 'local');
-            const { item } = await this.archiveMeta.updateItem(
-              metaRoot,
-              file.path,
-              { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-              { fields },
-            );
-            await this.fileRepo.update(fileId, {
-              meta: item as unknown as object,
+            await withFileWriteLock(fileId, async () => {
+              const { item } = await this.archiveMeta.updateItem(
+                metaRoot,
+                file.path,
+                { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
+                { fields },
+              );
+              await this.fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
             });
           }
         }
@@ -356,14 +366,19 @@ export class PreviewJob {
       if (!file) return;
       const root = await this.rootRepo.findById(file.archiveRootId);
       if (!root) return;
+      // Same per-file lock + stripped DB mirror as the image EXIF
+      // path above, for the same reason — ffprobe runs alongside
+      // user edits.
       const metaRoot = metaRootForArchive(file.archiveRootId, root.rootPath, 'local');
-      const { item } = await this.archiveMeta.updateItem(
-        metaRoot,
-        file.path,
-        { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-        { fields },
-      );
-      await this.fileRepo.update(fileId, { meta: item as unknown as object });
+      await withFileWriteLock(fileId, async () => {
+        const { item } = await this.archiveMeta.updateItem(
+          metaRoot,
+          file.path,
+          { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
+          { fields },
+        );
+        await this.fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
+      });
     } catch {
       // Non-fatal: metadata probing failure shouldn't block thumbnail generation
     }

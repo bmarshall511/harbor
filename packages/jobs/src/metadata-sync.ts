@@ -58,11 +58,20 @@ function stripSystemFromJson(item: HarborItemJson) {
  * Tags listed under `fields.tags` (string array) are the source of
  * truth — anything previously attached but not in the JSON is removed.
  *
- * No-op when `fields.tags` is missing or not an array.
+ * When `fields.tags` is missing or not an array, the file is treated
+ * as having no tags: ALL FileTag rows for the file are removed. This
+ * is critical because `pruneEmpty` in the archive-metadata service
+ * strips empty arrays from the JSON, so "I cleared every tag" arrives
+ * here as `undefined`, not `[]` — previously we treated that as a
+ * no-op and the relational table went permanently out of sync.
  */
 export async function syncTagsForFile(fileId: string, item: HarborItemJson): Promise<void> {
   const raw = item.fields?.tags;
-  if (!Array.isArray(raw)) return;
+  if (!Array.isArray(raw)) {
+    // User cleared all tags. Delete every FileTag row for this file.
+    await db.fileTag.deleteMany({ where: { fileId } });
+    return;
+  }
   const tagNames = raw.filter((t): t is string => typeof t === 'string' && t.trim().length > 0);
 
   // Resolve / create each tag.

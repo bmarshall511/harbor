@@ -1,7 +1,7 @@
 import { db, FileRepository, FolderRepository, ArchiveRootRepository, SettingsRepository } from '@harbor/database';
 import { LocalFilesystemProvider, ArchiveMetadataService } from '@harbor/providers';
 import { eventBus } from '@harbor/realtime';
-import { guessMimeType } from '@harbor/utils';
+import { guessMimeType, withFileWriteLock } from '@harbor/utils';
 import { PreviewJob } from './preview-job';
 import { fileUpdatePayloadFromJson, syncTagsForFile } from './metadata-sync';
 import * as path from 'node:path';
@@ -315,17 +315,20 @@ export class FileWatcherService {
       await syncTagsForFile(file.id, itemPayload);
     } else {
       // First sighting — write a minimal JSON so external tools can
-      // find the file by UUID immediately.
-      await this.archiveMeta.updateItem(
-        handle.rootPath,
-        relativePath,
-        {
-          name: fileName,
-          hash: hash ?? undefined,
-          createdAt: stat.birthtime,
-          modifiedAt: stat.mtime,
-        },
-        {},
+      // find the file by UUID immediately. Lock it so a user edit
+      // racing in right after creation can't be clobbered.
+      await withFileWriteLock(file.id, () =>
+        this.archiveMeta.updateItem(
+          handle.rootPath,
+          relativePath,
+          {
+            name: fileName,
+            hash: hash ?? undefined,
+            createdAt: stat.birthtime,
+            modifiedAt: stat.mtime,
+          },
+          {},
+        ),
       );
     }
 

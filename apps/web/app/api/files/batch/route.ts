@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { FileRepository, TagRepository, ArchiveRootRepository, db } from '@harbor/database';
 import { ArchiveMetadataService } from '@harbor/providers';
 import { fileUpdatePayloadFromJson, syncTagsForFile, metaRootForArchive } from '@harbor/jobs';
+import { withFileWriteLock } from '@harbor/utils';
 import { requireAuth, requirePermission } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { emit } from '@/lib/events';
@@ -145,11 +146,9 @@ export async function POST(request: Request) {
     }
 
     // Resolve tag IDs
-    const resolvedTags = [];
-    for (const tagName of tags) {
-      const tag = await tagRepo.findOrCreate(tagName);
-      resolvedTags.push(tag);
-    }
+    const resolvedTags = await Promise.all(
+      (tags as string[]).map((tagName) => tagRepo.findOrCreate(tagName)),
+    );
 
     for (const fileId of fileIds) {
       try {
@@ -160,18 +159,22 @@ export async function POST(request: Request) {
 
         // Write the merged tag list to the canonical JSON, then sync
         // both the DB row's `meta` mirror and the FileTag join table.
-        const existingTagNames = file.tags.map((t) => t.tag.name);
-        const merged = Array.from(new Set([...existingTagNames, ...resolvedTags.map((t) => t.name)]));
-
+        // The whole read-modify-write cycle is held under the shared
+        // per-file write lock so concurrent PATCHes / other batch ops
+        // on the same file can't trample each other.
         const metaRoot = metaRootForArchive(file.archiveRootId, root.rootPath, providerTypeForRoot(root.providerType));
-        const { item } = await archiveMeta.updateItem(
-          metaRoot,
-          file.path,
-          { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-          { fields: { tags: merged } },
-        );
-        await fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
-        await syncTagsForFile(fileId, item);
+        await withFileWriteLock(fileId, async () => {
+          const existingTagNames = file.tags.map((t) => t.tag.name);
+          const merged = Array.from(new Set([...existingTagNames, ...resolvedTags.map((t) => t.name)]));
+          const { item } = await archiveMeta.updateItem(
+            metaRoot,
+            file.path,
+            { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
+            { fields: { tags: merged } },
+          );
+          await fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
+          await syncTagsForFile(fileId, item);
+        });
 
         emit('tag.added', { entityType: 'FILE', entityId: fileId }, { userId: auth.userId });
         results.success++;
@@ -207,25 +210,29 @@ export async function POST(request: Request) {
         if (!root) { results.failed++; continue; }
 
         const metaRoot = metaRootForArchive(file.archiveRootId, root.rootPath, providerTypeForRoot(root.providerType));
-        const existing = await archiveMeta.readItem(metaRoot, file.path);
-        const current = (existing?.fields?.[fieldKey] as Array<{ kind: 'user' | 'free'; id?: string; name: string }> | undefined) ?? [];
+        // The read-merge-write cycle runs inside the per-file lock
+        // so a concurrent edit can't clobber the merge result.
+        await withFileWriteLock(fileId, async () => {
+          const existing = await archiveMeta.readItem(metaRoot, file.path);
+          const current = (existing?.fields?.[fieldKey] as Array<{ kind: 'user' | 'free'; id?: string; name: string }> | undefined) ?? [];
 
-        const seen = new Set(current.map(dedupeKey));
-        const merged = [...current];
-        for (const p of people) {
-          const k = dedupeKey(p);
-          if (seen.has(k)) continue;
-          seen.add(k);
-          merged.push(p);
-        }
+          const seen = new Set(current.map(dedupeKey));
+          const merged = [...current];
+          for (const p of people) {
+            const k = dedupeKey(p);
+            if (seen.has(k)) continue;
+            seen.add(k);
+            merged.push(p);
+          }
 
-        const { item } = await archiveMeta.updateItem(
-          metaRoot,
-          file.path,
-          { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-          { fields: { [fieldKey]: merged } },
-        );
-        await fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
+          const { item } = await archiveMeta.updateItem(
+            metaRoot,
+            file.path,
+            { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
+            { fields: { [fieldKey]: merged } },
+          );
+          await fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
+        });
 
         emit('metadata.updated', { entityType: 'FILE', entityId: fileId, fields: [fieldKey] }, { userId: auth.userId });
         results.success++;
@@ -253,13 +260,15 @@ export async function POST(request: Request) {
         if (!root) { results.failed++; continue; }
         const metaRoot = metaRootForArchive(file.archiveRootId, root.rootPath, providerTypeForRoot(root.providerType));
 
-        const { item } = await archiveMeta.updateItem(
-          metaRoot,
-          file.path,
-          { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-          { fields: { [fieldKey]: values.length > 0 ? values : null } },
-        );
-        await fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
+        await withFileWriteLock(fileId, async () => {
+          const { item } = await archiveMeta.updateItem(
+            metaRoot,
+            file.path,
+            { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
+            { fields: { [fieldKey]: values.length > 0 ? values : null } },
+          );
+          await fileRepo.update(fileId, fileUpdatePayloadFromJson(item));
+        });
 
         emit('metadata.updated', { entityType: 'FILE', entityId: fileId, fields: [fieldKey] }, { userId: auth.userId });
         results.success++;

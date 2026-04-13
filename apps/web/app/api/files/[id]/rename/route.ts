@@ -13,8 +13,8 @@ import { audit } from '@/lib/audit';
 import { emit } from '@/lib/events';
 import { serializeFile } from '@/lib/file-dto';
 import { getSecret } from '@/lib/secrets';
+import { withFileWriteLock } from '@harbor/utils';
 import { syncMetadataToDropbox } from '@/lib/dropbox-metadata-sync';
-import { withFileWriteLock } from '@/lib/file-write-lock';
 
 const fileRepo = new FileRepository();
 const rootRepo = new ArchiveRootRepository();

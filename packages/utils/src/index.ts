@@ -4,3 +4,4 @@ export { getFileExtension, guessMimeType, isImageMime, isVideoMime, isAudioMime,
 export { generateId } from './id';
 export { sleep, retry } from './async';
 export { parseDisplayName, friendlyName, type ParsedName } from './display-name';
+export { withFileWriteLock } from './file-write-lock';

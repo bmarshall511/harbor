@@ -273,6 +273,7 @@ async function generatePreviewFromCache(fileId: string, file: any, cachePath: st
         if (Object.keys(fields).length > 0) {
           const { ArchiveMetadataService } = await import('@harbor/providers');
           const { metaRootForArchive, fileUpdatePayloadFromJson } = await import('@harbor/jobs');
+          const { withFileWriteLock } = await import('@harbor/utils');
           const archiveMeta = new ArchiveMetadataService();
           // The cache route is Dropbox-only, but the metadata root
           // resolves the same way for any provider.
@@ -283,13 +284,17 @@ async function generatePreviewFromCache(fileId: string, file: any, cachePath: st
               root.rootPath,
               root.providerType === 'LOCAL_FILESYSTEM' ? 'local' : 'remote',
             );
-            const { item } = await archiveMeta.updateItem(
-              metaRoot,
-              file.path,
-              { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-              { fields },
-            );
-            await db.file.update({ where: { id: fileId }, data: fileUpdatePayloadFromJson(item) });
+            // Cache-path probing runs alongside user edits; lock the
+            // read-modify-write so neither side clobbers the other.
+            await withFileWriteLock(fileId, async () => {
+              const { item } = await archiveMeta.updateItem(
+                metaRoot,
+                file.path,
+                { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
+                { fields },
+              );
+              await db.file.update({ where: { id: fileId }, data: fileUpdatePayloadFromJson(item) });
+            });
           }
         }
       } catch { /* non-fatal */ }

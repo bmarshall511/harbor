@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { TagRepository, FileRepository, FolderRepository, ArchiveRootRepository } from '@harbor/database';
 import { ArchiveMetadataService } from '@harbor/providers';
 import { fileUpdatePayloadFromJson, syncTagsForFile, metaRootForArchive } from '@harbor/jobs';
+import { withFileWriteLock } from '@harbor/utils';
 import { requireAuth, requirePermission } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { emit } from '@/lib/events';
@@ -39,18 +40,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (file) {
         const root = await rootRepo.findById(file.archiveRootId);
         if (root) {
-          const remainingTags = file.tags
-            .filter((t) => t.tag.id !== tagId)
-            .map((t) => t.tag.name);
           const metaRoot = metaRootForArchive(file.archiveRootId, root.rootPath, providerTypeForRoot(root.providerType));
-          const { item } = await archiveMeta.updateItem(
-            metaRoot,
-            file.path,
-            { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
-            { fields: { tags: remainingTags } },
-          );
-          await fileRepo.update(entityId, fileUpdatePayloadFromJson(item));
-          await syncTagsForFile(entityId, item);
+          // Lock the read-modify-write so a concurrent PATCH /
+          // batch addTags on the same file can't put the removed
+          // tag back.
+          await withFileWriteLock(entityId, async () => {
+            const remainingTags = file.tags
+              .filter((t) => t.tag.id !== tagId)
+              .map((t) => t.tag.name);
+            const { item } = await archiveMeta.updateItem(
+              metaRoot,
+              file.path,
+              { name: file.name, hash: file.hash ?? undefined, createdAt: file.fileCreatedAt, modifiedAt: file.fileModifiedAt },
+              { fields: { tags: remainingTags } },
+            );
+            await fileRepo.update(entityId, fileUpdatePayloadFromJson(item));
+            await syncTagsForFile(entityId, item);
+          });
         }
       }
     } else if (entityType === 'FOLDER') {
