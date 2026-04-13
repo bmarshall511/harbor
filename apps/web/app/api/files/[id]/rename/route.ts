@@ -14,6 +14,7 @@ import { emit } from '@/lib/events';
 import { serializeFile } from '@/lib/file-dto';
 import { getSecret } from '@/lib/secrets';
 import { syncMetadataToDropbox } from '@/lib/dropbox-metadata-sync';
+import { withFileWriteLock } from '@/lib/file-write-lock';
 
 const fileRepo = new FileRepository();
 const rootRepo = new ArchiveRootRepository();
@@ -100,15 +101,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     root.providerType === 'LOCAL_FILESYSTEM' ? 'local' : 'remote',
   );
 
-  // ─── 1. Physical rename through the provider (if requested) ──────
-  //
-  // We use `path.posix` on the relative path so Dropbox's forward-
-  // slash semantics are preserved on every OS. The DB stores a
-  // relative path from the archive root; the provider wrapper knows
-  // how to map that to its absolute form.
+  // Validate the name before touching anything — this is cheap and
+  // doesn't need to run under the lock.
   let nextName = file.name;
   let nextRelPath = file.path;
-
   if (willRename) {
     const trimmed = newName!;
     if (trimmed.includes('/') || trimmed.includes('\\')) {
@@ -117,89 +113,82 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const dir = path.posix.dirname(file.path);
     nextRelPath = dir === '.' || dir === '' ? trimmed : path.posix.join(dir, trimmed);
     nextName = trimmed;
-
-    let provider: StorageProvider;
-    try {
-      provider = await createProviderForRoot(root, auth.userId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Provider unavailable';
-      return NextResponse.json({ message }, { status: 500 });
-    }
-
-    // Dropbox paths are absolute; local paths are relative to the root.
-    const providerPath =
-      root.providerType === 'DROPBOX'
-        ? `${root.rootPath === '/' ? '' : root.rootPath}/${file.path}`
-        : file.path;
-
-    try {
-      await provider.renameFile(providerPath, trimmed);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Provider rename failed';
-      return NextResponse.json({ message }, { status: 500 });
-    }
-
-    // Patch the sidecar index + item JSON `system.path`/`system.name`
-    // so the stable UUID still resolves from the new path. Failure
-    // here is non-fatal — the sidecar will self-heal on next reindex
-    // but we log it so it's visible.
-    try {
-      await archiveMeta.renameItem(metaRoot, file.path, nextRelPath);
-    } catch (err) {
-      console.error('[Rename] Sidecar renameItem failed (non-fatal):', err);
-    }
   }
 
-  // ─── 2. Date override (if requested) ─────────────────────────────
-  //
-  // Write the canonical JSON first so the next reindex sees the new
-  // override. Passing `null` clears it; a `Date` sets it.
-  if (parsedCreatedAt !== undefined) {
-    try {
-      const { item } = await archiveMeta.updateItem(
-        metaRoot,
-        nextRelPath,
-        {
-          name: nextName,
-          hash: file.hash ?? undefined,
-          createdAt: file.fileCreatedAt,
-          modifiedAt: file.fileModifiedAt,
-        },
-        {
-          systemOverride: {
-            createdAtOverride: parsedCreatedAt === null ? null : parsedCreatedAt.toISOString(),
-          },
-        },
-      );
+  // The whole write pipeline runs under a per-file lock so a
+  // simultaneous PATCH /files/:id or second rename can't trample the
+  // sidecar JSON or the DB row. The provider rename itself is also
+  // serialised, which prevents two rename requests for the same file
+  // from racing to the filesystem.
+  let updated: Awaited<ReturnType<typeof fileRepo.findById>> | null = null;
+  try {
+    updated = await withFileWriteLock(id, async () => {
+      // ─── 1. Physical rename through the provider ──────────────
+      if (willRename) {
+        const provider = await createProviderForRoot(root, auth.userId);
 
-      // Mirror the sidecar to Dropbox (fire-and-forget) so it's
-      // visible to other instances — same pattern as the PATCH route.
-      if (root.providerType === 'DROPBOX') {
-        const itemJson = JSON.stringify(item, null, 2);
-        syncMetadataToDropbox(root.id, `items/${file.harborItemId}.json`, itemJson)
-          .catch((err) => console.error('[Rename] Dropbox sidecar sync failed:', err));
+        // Dropbox paths are absolute; local paths are relative to the root.
+        const providerPath =
+          root.providerType === 'DROPBOX'
+            ? `${root.rootPath === '/' ? '' : root.rootPath}/${file.path}`
+            : file.path;
+
+        await provider.renameFile(providerPath, nextName);
+
+        // Patch the sidecar index + item JSON `system.path`/`system.name`
+        // so the stable UUID still resolves from the new path. Failure
+        // here is non-fatal — the sidecar will self-heal on next
+        // reindex, but we log it.
+        try {
+          await archiveMeta.renameItem(metaRoot, file.path, nextRelPath);
+        } catch (err) {
+          console.error('[Rename] Sidecar renameItem failed (non-fatal):', err);
+        }
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to write metadata sidecar';
-      return NextResponse.json({ message }, { status: 500 });
-    }
+
+      // ─── 2. Date override ──────────────────────────────────────
+      if (parsedCreatedAt !== undefined) {
+        const { item } = await archiveMeta.updateItem(
+          metaRoot,
+          nextRelPath,
+          {
+            name: nextName,
+            hash: file.hash ?? undefined,
+            createdAt: file.fileCreatedAt,
+            modifiedAt: file.fileModifiedAt,
+          },
+          {
+            systemOverride: {
+              createdAtOverride: parsedCreatedAt === null ? null : parsedCreatedAt.toISOString(),
+            },
+          },
+        );
+
+        // Fire-and-forget Dropbox mirror — same pattern as PATCH.
+        if (root.providerType === 'DROPBOX') {
+          const itemJson = JSON.stringify(item, null, 2);
+          syncMetadataToDropbox(root.id, `items/${file.harborItemId}.json`, itemJson)
+            .catch((err) => console.error('[Rename] Dropbox sidecar sync failed:', err));
+        }
+      }
+
+      // ─── 3. Mirror to the DB row ───────────────────────────────
+      const dbUpdate: { name?: string; path?: string; fileCreatedAt?: Date | null } = {};
+      if (willRename) {
+        dbUpdate.name = nextName;
+        dbUpdate.path = nextRelPath;
+      }
+      if (parsedCreatedAt !== undefined) {
+        dbUpdate.fileCreatedAt = parsedCreatedAt;
+      }
+      await fileRepo.update(id, dbUpdate);
+      return fileRepo.findById(id);
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Rename failed';
+    return NextResponse.json({ message }, { status: 500 });
   }
 
-  // ─── 3. Mirror everything to the DB row ──────────────────────────
-  const dbUpdate: {
-    name?: string;
-    path?: string;
-    fileCreatedAt?: Date | null;
-  } = {};
-  if (willRename) {
-    dbUpdate.name = nextName;
-    dbUpdate.path = nextRelPath;
-  }
-  if (parsedCreatedAt !== undefined) {
-    dbUpdate.fileCreatedAt = parsedCreatedAt;
-  }
-  await fileRepo.update(id, dbUpdate);
-  const updated = await fileRepo.findById(id);
   if (!updated) return NextResponse.json({ message: 'Not found' }, { status: 404 });
 
   // ─── 4. Audit + realtime fanout ──────────────────────────────────

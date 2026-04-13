@@ -97,6 +97,8 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
       queryClient.invalidateQueries({ queryKey: ['recommendations'] });
       queryClient.invalidateQueries({ queryKey: ['recently-viewed'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['review-queue'] });
+      queryClient.invalidateQueries({ queryKey: ['review-queue-count'] });
       setEditing(false);
       toast.success('Saved');
     },
@@ -146,20 +148,14 @@ export function FileMetadataEditor({ file }: { file: FileDto }) {
           {canEditAny && (file.mimeType?.startsWith('image/') || file.previews?.length > 0) && (
             <AiSuggestButton
               fileId={file.id}
-              onSelectTitle={(v) => {
-                mutation.mutate({ title: v });
-              }}
-              onSelectDescription={(v) => {
-                mutation.mutate({ description: v });
-              }}
-              onSelectTags={async (aiTags) => {
-                try {
-                  await filesApi.update(file.id, { tags: aiTags });
-                  queryClient.invalidateQueries({ queryKey: ['file', file.id] });
-                  queryClient.invalidateQueries({ queryKey: ['tags'] });
-                } catch {
-                  // Non-fatal
-                }
+              onApply={async (payload) => {
+                // Single PATCH containing every picked field — title,
+                // description, and tags all land in one sidecar write,
+                // so the server-side lock serialises them atomically
+                // against any other in-flight edit. The shared
+                // `mutation` hook handles invalidation, so no manual
+                // query refresh is needed here.
+                await mutation.mutateAsync(payload);
               }}
             />
           )}

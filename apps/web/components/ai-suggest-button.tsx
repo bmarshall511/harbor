@@ -68,15 +68,29 @@ interface SuggestResponse {
   provider: string;
 }
 
+/**
+ * Payload handed to the parent on Apply. Only the keys the user
+ * actually picked are present — the parent is responsible for firing
+ * a single update request so fields can't race each other.
+ */
+export interface AiApplyPayload {
+  title?: string;
+  description?: string;
+  tags?: string[];
+}
+
 interface AiSuggestButtonProps {
   fileId: string;
-  onSelectTitle: (value: string) => void;
-  onSelectDescription?: (value: string) => void;
-  onSelectTags?: (tags: string[]) => void | Promise<void>;
+  /**
+   * Called once with all selected content when the user clicks
+   * Apply. Must persist all fields in a single write — splitting
+   * into multiple calls races on the server-side sidecar write.
+   */
+  onApply: (payload: AiApplyPayload) => Promise<void> | void;
   enabled?: boolean;
 }
 
-export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, onSelectTags, enabled = true }: AiSuggestButtonProps) {
+export function AiSuggestButton({ fileId, onApply, enabled = true }: AiSuggestButtonProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<SuggestResponse | null>(null);
@@ -140,16 +154,22 @@ export function AiSuggestButton({ fileId, onSelectTitle, onSelectDescription, on
     if (!data) return;
     setApplying(true);
     try {
-      // Apply selected title (sync — sets form state)
+      // Collect everything the user picked and send it to the parent
+      // in a single call. A previous implementation split this into
+      // three separate mutations (title / description / tags), which
+      // raced on the server-side sidecar read-modify-write and caused
+      // fields to silently disappear.
+      const payload: AiApplyPayload = {};
       const title = data.suggestions[selectedTitle];
-      if (title) onSelectTitle(title);
-      // Apply selected description (sync — sets form state)
-      if (selectedDesc >= 0 && data.descriptions[selectedDesc] && onSelectDescription) {
-        onSelectDescription(data.descriptions[selectedDesc]);
+      if (title) payload.title = title;
+      if (selectedDesc >= 0 && data.descriptions[selectedDesc]) {
+        payload.description = data.descriptions[selectedDesc];
       }
-      // Apply checked tags (async — calls API directly)
-      if (selectedTags.size > 0 && onSelectTags) {
-        await onSelectTags([...selectedTags]);
+      if (selectedTags.size > 0) {
+        payload.tags = [...selectedTags];
+      }
+      if (Object.keys(payload).length > 0) {
+        await onApply(payload);
       }
     } finally {
       setApplying(false);

@@ -7,6 +7,7 @@ import { audit } from '@/lib/audit';
 import { emit } from '@/lib/events';
 import { serializeFile } from '@/lib/file-dto';
 import { syncMetadataToDropbox } from '@/lib/dropbox-metadata-sync';
+import { withFileWriteLock } from '@/lib/file-write-lock';
 
 const fileRepo = new FileRepository();
 const rootRepo = new ArchiveRootRepository();
@@ -104,20 +105,35 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     fields.tags = merged;
   }
 
-  // Step 1 — write the canonical JSON file. The metadata service
-  // resolves the right metadata root for the archive's provider type.
+  // Step 1 — write the canonical JSON file + mirror it to the DB row.
+  // The whole read-modify-write cycle is held under a per-file lock
+  // so concurrent edits (e.g. the AI Apply path firing title /
+  // description / tags in parallel) can't trample each other. Without
+  // the lock, the last writer wins and individual fields silently
+  // disappear. The lock is short — it only guards the sidecar + DB
+  // sync, not the fire-and-forget Dropbox upload.
   const metaRoot = metaRootForArchive(before.archiveRootId, root.rootPath, providerTypeForRoot(root.providerType));
-  const { item } = await archiveMeta.updateItem(
-    metaRoot,
-    before.path,
-    {
-      name: before.name,
-      hash: before.hash ?? undefined,
-      createdAt: before.fileCreatedAt,
-      modifiedAt: before.fileModifiedAt,
-    },
-    { core, fields },
-  );
+  const { item } = await withFileWriteLock(id, async () => {
+    const { item } = await archiveMeta.updateItem(
+      metaRoot,
+      before.path,
+      {
+        name: before.name,
+        hash: before.hash ?? undefined,
+        createdAt: before.fileCreatedAt,
+        modifiedAt: before.fileModifiedAt,
+      },
+      { core, fields },
+    );
+
+    // Step 2 — mirror the derived DB columns from the freshly-written
+    // JSON. Kept inside the lock so a concurrent reader never sees
+    // the JSON and the DB disagree.
+    await fileRepo.update(id, fileUpdatePayloadFromJson(item));
+    await syncTagsForFile(id, item);
+
+    return { item };
+  });
 
   // Step 1b — sync the metadata JSON to Dropbox so it's visible on
   // all devices and deployments. This runs fire-and-forget so it
@@ -133,10 +149,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     syncMetadataToDropbox(before.archiveRootId, 'index.json', JSON.stringify(index, null, 2))
       .catch((err) => console.error('[MetaSync] Dropbox index sync failed:', err));
   }
-
-  // Step 2 — sync the derived DB columns from the freshly-written JSON.
-  await fileRepo.update(id, fileUpdatePayloadFromJson(item));
-  await syncTagsForFile(id, item);
 
   // Step 2b — ensure Person records exist for every name in
   // meta.fields.people. This bridges the per-file JSON annotation
