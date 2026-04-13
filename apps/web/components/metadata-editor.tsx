@@ -4,8 +4,9 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { files as filesApi, folders as foldersApi, users as usersApi } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { Pencil, Save, X, Star, Users, UserPlus, Check, PawPrint, User } from 'lucide-react';
+import { Pencil, Save, X, Star, Users, UserPlus, Check, PawPrint, User, Network } from 'lucide-react';
 import { AiSuggestButton } from '@/components/ai-suggest-button';
+import { AddPersonWizard } from '@/components/add-person-wizard';
 import { toast } from 'sonner';
 import { TagEditor } from '@/components/tag-editor';
 import { useAuth } from '@/lib/use-auth';
@@ -371,6 +372,7 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
+  const [showWizard, setShowWizard] = useState(false);
 
   // Current selection persisted on this file
   const initial = useMemo<Person[]>(() => normalizePeople(file.meta?.fields?.[field.key]), [file, field.key]);
@@ -562,10 +564,21 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
 
   return (
     <div>
-      <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-        <Users className="h-3 w-3" />
-        {knownPersons.some((p) => p.entityType === 'PET') ? 'People & Pets' : field.name}
-      </label>
+      <div className="mb-1 flex items-center justify-between">
+        <label className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <Users className="h-3 w-3" />
+          {knownPersons.some((p) => p.entityType === 'PET') ? 'People & Pets' : field.name}
+        </label>
+        <button
+          type="button"
+          onClick={() => setShowWizard(true)}
+          className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
+          title="Create person with relationships"
+        >
+          <Network className="h-2.5 w-2.5" />
+          <span>New</span>
+        </button>
+      </div>
 
       {/* Avatar quick-select grid */}
       {quickSelectPeople.length > 0 && (
@@ -744,9 +757,34 @@ function PeopleField({ field, file }: { field: FieldTemplate; file: FileDto }) {
                 </button>
               );
             })}
+            {/* Create with relationships option */}
+            {query.trim() && (
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setOpen(false);
+                  setShowWizard(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent/50 border-t border-border/50 mt-1 pt-1.5"
+              >
+                <Network className="h-3 w-3" />
+                <span>Create &quot;{query.trim()}&quot; with relationships...</span>
+              </button>
+            )}
           </div>
         )}
       </div>
+
+      <AddPersonWizard
+        open={showWizard}
+        onClose={() => {
+          setShowWizard(false);
+          setQuery('');
+          queryClient.invalidateQueries({ queryKey: ['persons'] });
+          queryClient.invalidateQueries({ queryKey: ['file', file.id] });
+        }}
+      />
     </div>
   );
 }
